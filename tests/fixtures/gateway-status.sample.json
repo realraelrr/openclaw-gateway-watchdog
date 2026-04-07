@@ -1,0 +1,98 @@
+{
+  "service": {
+    "label": "LaunchAgent",
+    "loaded": true,
+    "loadedText": "loaded",
+    "notLoadedText": "not loaded",
+    "command": {
+      "programArguments": [
+        "/Users/rael/.nvm/versions/node/v24.13.0/bin/node",
+        "/Users/rael/.nvm/versions/node/v24.13.0/lib/node_modules/openclaw/dist/index.js",
+        "gateway",
+        "--port",
+        "18789"
+      ],
+      "environment": {
+        "OPENCLAW_GATEWAY_PORT": "18789"
+      },
+      "sourcePath": "/Users/rael/Library/LaunchAgents/ai.openclaw.gateway.plist"
+    },
+    "runtime": {
+      "status": "running",
+      "state": "active",
+      "pid": 58776,
+      "cachedLabel": false
+    },
+    "configAudit": {
+      "ok": false,
+      "issues": [
+        {
+          "code": "gateway-path-missing-dirs",
+          "message": "Gateway service PATH missing required dirs: /Users/rael/.nvm",
+          "level": "recommended"
+        },
+        {
+          "code": "gateway-path-nonminimal",
+          "message": "Gateway service PATH includes version managers or package managers; recommend a minimal PATH.",
+          "detail": "/Users/rael/.nvm/versions/node/v24.13.0/bin",
+          "level": "recommended"
+        },
+        {
+          "code": "gateway-runtime-node-version-manager",
+          "message": "Gateway service uses Node from a version manager; it can break after upgrades.",
+          "detail": "/Users/rael/.nvm/versions/node/v24.13.0/bin/node",
+          "level": "recommended"
+        },
+        {
+          "code": "gateway-runtime-node-system-missing",
+          "message": "System Node 22 LTS (22.14+) or Node 24 not found; install it before migrating away from version managers.",
+          "level": "recommended"
+        }
+      ]
+    }
+  },
+  "config": {
+    "cli": {
+      "path": "/Users/rael/.openclaw/openclaw.json",
+      "exists": true,
+      "valid": true
+    },
+    "daemon": {
+      "path": "/Users/rael/.openclaw/openclaw.json",
+      "exists": true,
+      "valid": true
+    }
+  },
+  "gateway": {
+    "bindMode": "loopback",
+    "bindHost": "0.0.0.0",
+    "port": 18789,
+    "portSource": "service args",
+    "probeUrl": "ws://127.0.0.1:18789",
+    "probeNote": "Loopback-only gateway; only local clients can connect."
+  },
+  "port": {
+    "port": 18789,
+    "status": "busy",
+    "listeners": [
+      {
+        "pid": 58776,
+        "command": "node",
+        "address": "127.0.0.1:18789"
+      }
+    ],
+    "hints": [
+      "Another process is listening on this port."
+    ]
+  },
+  "rpc": {
+    "ok": false,
+    "error": "gateway closed (1006): ",
+    "url": "ws://127.0.0.1:18789"
+  },
+  "health": {
+    "healthy": true,
+    "staleGatewayPids": []
+  },
+  "extraServices": []
+}

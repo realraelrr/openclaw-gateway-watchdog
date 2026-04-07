@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.openclaw.gateway-watchdog</string>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>30</integer>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/Users/rael/.openclaw/scripts/watchdog/gateway-watchdog.sh</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>WATCHDOG_ENV_FILE</key>
+    <string>/Users/rael/.openclaw/config/watchdog.env</string>
+    <key>DISCORD_WATCHDOG_WEBHOOK_URL</key>
+    <string></string>
+    <key>FEISHU_WATCHDOG_WEBHOOK_URL</key>
+    <string></string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>/Users/rael/.openclaw/logs/gateway-watchdog.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/rael/.openclaw/logs/gateway-watchdog.log</string>
+</dict>
+</plist>
