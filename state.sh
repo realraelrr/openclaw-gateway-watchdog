@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 
-WATCHDOG_LOCK_DIR="${WATCHDOG_LOCK_DIR:-$HOME/.openclaw/.state/runtime/gateway_watchdog.lock}"
 WATCHDOG_LOCK_STALE_SEC="${WATCHDOG_LOCK_STALE_SEC:-120}"
-WATCHDOG_RUNTIME_TMP_DIR="${WATCHDOG_RUNTIME_TMP_DIR:-$HOME/.openclaw/.state/runtime/tmp}"
 
 init_state() {
   mkdir -p "$(dirname "$STATE_FILE")"
@@ -37,15 +35,23 @@ write_state() {
 }
 
 reap_stale_lock_if_needed() {
-  local started_at now pid
+  local started_at now pid dir_mtime
 
   [[ -d "$WATCHDOG_LOCK_DIR" ]] || return 0
 
+  now="$(date +%s)"
+  if [[ ! -f "$WATCHDOG_LOCK_DIR/pid" || ! -f "$WATCHDOG_LOCK_DIR/started_at" ]]; then
+    dir_mtime="$(stat -f %m "$WATCHDOG_LOCK_DIR" 2>/dev/null || echo 0)"
+    if (( now - dir_mtime > WATCHDOG_LOCK_STALE_SEC )); then
+      rm -rf "$WATCHDOG_LOCK_DIR"
+    fi
+    return 0
+  fi
+
   started_at="$(cat "$WATCHDOG_LOCK_DIR/started_at" 2>/dev/null || echo 0)"
   pid="$(cat "$WATCHDOG_LOCK_DIR/pid" 2>/dev/null || echo '')"
-  now="$(date +%s)"
 
-  if (( now - started_at > WATCHDOG_LOCK_STALE_SEC )) && [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+  if (( now - started_at > WATCHDOG_LOCK_STALE_SEC )) && { [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; }; then
     rm -f "$WATCHDOG_LOCK_DIR/pid" "$WATCHDOG_LOCK_DIR/started_at"
     rmdir "$WATCHDOG_LOCK_DIR" 2>/dev/null || rm -rf "$WATCHDOG_LOCK_DIR"
   fi

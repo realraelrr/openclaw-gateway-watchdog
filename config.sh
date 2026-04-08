@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 
-WATCHDOG_ENV_FILE="${WATCHDOG_ENV_FILE:-$HOME/.openclaw/config/watchdog.env}"
+derive_watchdog_paths() {
+  : "${OPENCLAW_HOME:=$HOME/.openclaw}"
+  : "${WATCHDOG_STATE_DIR:=$OPENCLAW_HOME/.state/runtime}"
+  : "${WATCHDOG_LOG_DIR:=$OPENCLAW_HOME/logs}"
+  : "${WATCHDOG_ENV_FILE:=$OPENCLAW_HOME/config/watchdog.env}"
+  : "${STATE_FILE:=$WATCHDOG_STATE_DIR/gateway_watchdog_state.json}"
+  : "${WATCHDOG_DISABLE_FILE:=$WATCHDOG_STATE_DIR/gateway_watchdog.disabled}"
+  : "${WATCHDOG_LOCK_DIR:=$WATCHDOG_STATE_DIR/gateway_watchdog.lock}"
+  : "${WATCHDOG_RUNTIME_TMP_DIR:=$WATCHDOG_STATE_DIR/tmp}"
+  : "${LOG_FILE:=$WATCHDOG_LOG_DIR/gateway-watchdog.log}"
+}
 
 load_watchdog_env_file() {
   local file="$1" line key value
@@ -15,7 +25,7 @@ load_watchdog_env_file() {
     value="${line#*=}"
 
     case "$key" in
-      DISCORD_WATCHDOG_WEBHOOK_URL|FEISHU_WATCHDOG_WEBHOOK_URL|NOTIFIER|FAIL_THRESHOLD|COOLDOWN_SEC|POST_RESTART_RETRIES|POST_RESTART_SLEEP_SEC|PROBE_CONFIRM_SLEEP_SEC|OPENCLAW_BIN|NODE_BIN|WATCHDOG_ENABLED|WATCHDOG_DISABLE_FILE|WATCHDOG_ENV_FILE)
+      OPENCLAW_HOME|WATCHDOG_STATE_DIR|WATCHDOG_LOG_DIR|WATCHDOG_ENV_FILE|STATE_FILE|WATCHDOG_DISABLE_FILE|WATCHDOG_LOCK_DIR|WATCHDOG_RUNTIME_TMP_DIR|LOG_FILE|DISCORD_WATCHDOG_WEBHOOK_URL|FEISHU_WATCHDOG_WEBHOOK_URL|NOTIFIER|FAIL_THRESHOLD|COOLDOWN_SEC|POST_RESTART_RETRIES|POST_RESTART_SLEEP_SEC|OPENCLAW_BIN|NODE_BIN|WATCHDOG_ENABLED)
         [[ -n "${!key:-}" ]] || printf -v "$key" '%s' "$value"
         ;;
       *)
@@ -32,20 +42,19 @@ apply_watchdog_defaults() {
   : "${COOLDOWN_SEC:=300}"
   : "${POST_RESTART_RETRIES:=3}"
   : "${POST_RESTART_SLEEP_SEC:=5}"
-  : "${PROBE_CONFIRM_SLEEP_SEC:=2}"
   : "${NOTIFIER:=composite}"
   : "${OPENCLAW_BIN:=}"
   : "${NODE_BIN:=}"
   : "${WATCHDOG_ENABLED:=1}"
-  : "${WATCHDOG_DISABLE_FILE:=/Users/rael/.openclaw/.state/runtime/gateway_watchdog.disabled}"
   : "${DISCORD_WATCHDOG_WEBHOOK_URL:=}"
   : "${FEISHU_WATCHDOG_WEBHOOK_URL:=}"
 }
 
 load_watchdog_config() {
-  WATCHDOG_ENV_FILE="${WATCHDOG_ENV_FILE:-$HOME/.openclaw/config/watchdog.env}"
+  derive_watchdog_paths
   load_watchdog_env_file "$WATCHDOG_ENV_FILE"
   apply_watchdog_defaults
+  derive_watchdog_paths
 
   DISCORD_WEBHOOK_URL="${DISCORD_WATCHDOG_WEBHOOK_URL:-}"
   FEISHU_WEBHOOK_URL="${FEISHU_WATCHDOG_WEBHOOK_URL:-}"

@@ -27,6 +27,10 @@ function runBash(script, { env = {} } = {}) {
   });
 }
 
+function escapeForRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 test('wrapper: gateway-watchdog.sh is a thin entrypoint shell', () => {
   const script = readFile(wrapperPath);
 
@@ -70,7 +74,6 @@ test('config precedence: process env overrides WATCHDOG_ENV_FILE and defaults', 
       'COOLDOWN_SEC=111',
       'POST_RESTART_RETRIES=7',
       'POST_RESTART_SLEEP_SEC=8',
-      'PROBE_CONFIRM_SLEEP_SEC=6',
       'NOTIFIER=discord',
       'WATCHDOG_ENABLED=0',
       '',
@@ -86,7 +89,6 @@ test('config precedence: process env overrides WATCHDOG_ENV_FILE and defaults', 
         "COOLDOWN_SEC=$COOLDOWN_SEC" \
         "POST_RESTART_RETRIES=$POST_RESTART_RETRIES" \
         "POST_RESTART_SLEEP_SEC=$POST_RESTART_SLEEP_SEC" \
-        "PROBE_CONFIRM_SLEEP_SEC=$PROBE_CONFIRM_SLEEP_SEC" \
         "NOTIFIER=$NOTIFIER" \
         "WATCHDOG_ENABLED=$WATCHDOG_ENABLED"
     `,
@@ -104,7 +106,6 @@ test('config precedence: process env overrides WATCHDOG_ENV_FILE and defaults', 
   assert.match(output, /COOLDOWN_SEC=111/);
   assert.match(output, /POST_RESTART_RETRIES=7/);
   assert.match(output, /POST_RESTART_SLEEP_SEC=8/);
-  assert.match(output, /PROBE_CONFIRM_SLEEP_SEC=6/);
   assert.match(output, /NOTIFIER=feishu/);
   assert.match(output, /WATCHDOG_ENABLED=0/);
 });
@@ -124,7 +125,6 @@ test('config precedence: defaults apply when neither env source sets a key', () 
         "COOLDOWN_SEC=$COOLDOWN_SEC" \
         "POST_RESTART_RETRIES=$POST_RESTART_RETRIES" \
         "POST_RESTART_SLEEP_SEC=$POST_RESTART_SLEEP_SEC" \
-        "PROBE_CONFIRM_SLEEP_SEC=$PROBE_CONFIRM_SLEEP_SEC" \
         "NOTIFIER=$NOTIFIER"
     `,
     {
@@ -139,8 +139,44 @@ test('config precedence: defaults apply when neither env source sets a key', () 
   assert.match(output, /COOLDOWN_SEC=300/);
   assert.match(output, /POST_RESTART_RETRIES=3/);
   assert.match(output, /POST_RESTART_SLEEP_SEC=5/);
-  assert.match(output, /PROBE_CONFIRM_SLEEP_SEC=2/);
   assert.match(output, /NOTIFIER=composite/);
+});
+
+test('public paths: OPENCLAW_HOME drives env file lookup and derived state/log paths', () => {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-public-home-'));
+  const configDir = path.join(tempHome, 'config');
+
+  fs.mkdirSync(configDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(configDir, 'watchdog.env'),
+    ['FAIL_THRESHOLD=9', 'NOTIFIER=feishu', ''].join('\n'),
+  );
+
+  const output = runBash(`
+    source "${corePath}"
+    OPENCLAW_HOME="${tempHome}"
+    load_watchdog_config
+    printf '%s\\n' \
+      "WATCHDOG_ENV_FILE=$WATCHDOG_ENV_FILE" \
+      "WATCHDOG_DISABLE_FILE=$WATCHDOG_DISABLE_FILE" \
+      "STATE_FILE=$STATE_FILE" \
+      "LOG_FILE=$LOG_FILE" \
+      "FAIL_THRESHOLD=$FAIL_THRESHOLD" \
+      "NOTIFIER=$NOTIFIER"
+  `);
+
+  assert.match(output, new RegExp(`WATCHDOG_ENV_FILE=${escapeForRegex(path.join(tempHome, 'config', 'watchdog.env'))}`));
+  assert.match(
+    output,
+    new RegExp(`WATCHDOG_DISABLE_FILE=${escapeForRegex(path.join(tempHome, '.state', 'runtime', 'gateway_watchdog.disabled'))}`),
+  );
+  assert.match(
+    output,
+    new RegExp(`STATE_FILE=${escapeForRegex(path.join(tempHome, '.state', 'runtime', 'gateway_watchdog_state.json'))}`),
+  );
+  assert.match(output, new RegExp(`LOG_FILE=${escapeForRegex(path.join(tempHome, 'logs', 'gateway-watchdog.log'))}`));
+  assert.match(output, /FAIL_THRESHOLD=9/);
+  assert.match(output, /NOTIFIER=feishu/);
 });
 
 test('probe: sampled fixture uses real gateway status field names', () => {
@@ -248,6 +284,29 @@ test('lock: stale lock is reaped and reacquired before taking ownership', () => 
 
   assert.match(output, /result=acquired/);
   assert.doesNotMatch(output, /pid=999999/);
+});
+
+test('lock: orphaned lock dir without metadata is reaped after staleness threshold', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-lock-orphaned-'));
+  const lockDir = path.join(tempDir, 'gateway.lock');
+
+  fs.mkdirSync(lockDir, { recursive: true });
+  fs.utimesSync(lockDir, new Date(0), new Date(0));
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    WATCHDOG_LOCK_DIR="${lockDir}"
+    WATCHDOG_LOCK_STALE_SEC=1
+    if acquire_watchdog_lock; then
+      result=acquired
+    else
+      result=locked
+    fi
+    printf 'result=%s\\n' "$result"
+  `);
+
+  assert.match(output, /result=acquired/);
 });
 
 test('lock: second instance logs watchdog_locked and exits without taking lock', () => {
