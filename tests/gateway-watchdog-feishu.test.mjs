@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,6 +27,13 @@ const plistTemplate = fs.readFileSync(
 
 function countMatches(haystack, needle) {
   return haystack.split(needle).length - 1;
+}
+
+function runBash(script, { env = {} } = {}) {
+  return spawnSync('/bin/bash', ['-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
 }
 
 test('notify: core loads notifier modules through whitelist case mapping', () => {
@@ -107,4 +116,148 @@ test('launchd: install script derives repo-root watchdog paths instead of fixed 
   assert.match(installLaunchAgent, /WATCHDOG_LOG_DIR="\$\{WATCHDOG_LOG_DIR:-\$OPENCLAW_HOME\/logs\}"/);
   assert.match(installLaunchAgent, /WATCHDOG_SCRIPT_PATH="\$REPO_ROOT\/gateway-watchdog\.sh"/);
   assert.doesNotMatch(installLaunchAgent, /WATCHDOG_ENV_FILE_DEFAULT="\/Users\/rael/);
+});
+
+test('launchd: install script renders plist and invokes launchctl bootstrap flow with derived paths', () => {
+  const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-launchd-home-'));
+  const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-launchd-bin-'));
+  const callsFile = path.join(tempHome, 'launchctl.calls');
+  const expectedEnvFile = path.join(tempHome, '.openclaw', 'config', 'watchdog.env');
+  const expectedLogFile = path.join(tempHome, '.openclaw', 'logs', 'gateway-watchdog.log');
+  const targetFile = path.join(tempHome, 'Library', 'LaunchAgents', 'ai.openclaw.gateway-watchdog.plist');
+
+  fs.writeFileSync(
+    path.join(fakeBinDir, 'launchctl'),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${callsFile}"
+exit 0
+`,
+    { mode: 0o755 },
+  );
+
+  const result = runBash(
+    `"${path.join(launchdDir, 'install-gateway-watchdog-launchagent.sh')}"`,
+    {
+      env: {
+        HOME: tempHome,
+        PATH: `${fakeBinDir}:${process.env.PATH}`,
+      },
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Installed:/);
+  assert.equal(fs.existsSync(targetFile), true);
+  assert.equal(fs.existsSync(path.join(tempHome, '.openclaw', 'logs')), true);
+  const renderedPlist = fs.readFileSync(targetFile, 'utf8');
+  assert.match(renderedPlist, new RegExp(expectedEnvFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(renderedPlist, new RegExp(expectedLogFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(renderedPlist, /gateway-watchdog\.sh/);
+  const calls = fs.readFileSync(callsFile, 'utf8');
+  assert.match(calls, /bootout gui\/\d+\/ai\.openclaw\.gateway-watchdog/);
+  assert.match(calls, /bootstrap gui\/\d+ .*ai\.openclaw\.gateway-watchdog\.plist/);
+  assert.match(calls, /kickstart -k gui\/\d+\/ai\.openclaw\.gateway-watchdog/);
+});
+
+test('notify: discord notifier succeeds against mocked webhook transport', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-discord-notify-'));
+  const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-discord-bin-'));
+  const curlLog = path.join(tempDir, 'curl.log');
+  const notifyBase = path.join(tempDir, 'notify');
+  const logFile = path.join(tempDir, 'watchdog.log');
+
+  fs.writeFileSync(
+    path.join(fakeBinDir, 'curl'),
+    `#!/usr/bin/env bash
+out_file=""
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then
+    out_file="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+printf 'curl ok\\n' > "$out_file"
+printf '%s\\n' "$*" >> "${curlLog}"
+printf '204'
+`,
+    { mode: 0o755 },
+  );
+
+  const result = runBash(
+    `
+      source "${path.join(repoRoot, 'notifiers', 'discord.sh')}"
+      LOG_FILE="${logFile}"
+      NOTIFY_OUTPUT_FILE="${notifyBase}"
+      DISCORD_WEBHOOK_URL="https://example.invalid/discord"
+      log() { printf '%s %s %s %s\\n' "$1" "$2" "$3" "$4" >> "$LOG_FILE"; }
+      if notify_send "hello discord"; then
+        printf 'status=0\\n'
+      else
+        printf 'status=%s\\n' "$?"
+      fi
+    `,
+    {
+      env: {
+        PATH: `${fakeBinDir}:${process.env.PATH}`,
+      },
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /status=0/);
+  const log = fs.readFileSync(logFile, 'utf8');
+  assert.match(log, /INFO notify_ok provider=discord status=204/);
+  assert.equal(fs.existsSync(`${notifyBase}.discord.body`), true);
+});
+
+test('notify: feishu notifier records http-status failures against mocked webhook transport', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-feishu-notify-'));
+  const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-feishu-bin-'));
+  const notifyBase = path.join(tempDir, 'notify');
+  const logFile = path.join(tempDir, 'watchdog.log');
+
+  fs.writeFileSync(
+    path.join(fakeBinDir, 'curl'),
+    `#!/usr/bin/env bash
+out_file=""
+while (($#)); do
+  if [[ "$1" == "-o" ]]; then
+    out_file="$2"
+    shift 2
+    continue
+  fi
+  shift
+done
+printf 'upstream failed\\n' > "$out_file"
+printf '500'
+`,
+    { mode: 0o755 },
+  );
+
+  const result = runBash(
+    `
+      source "${path.join(repoRoot, 'notifiers', 'feishu.sh')}"
+      LOG_FILE="${logFile}"
+      NOTIFY_OUTPUT_FILE="${notifyBase}"
+      FEISHU_WEBHOOK_URL="https://example.invalid/feishu"
+      log() { printf '%s %s %s %s\\n' "$1" "$2" "$3" "$4" >> "$LOG_FILE"; }
+      if notify_send "hello feishu"; then
+        printf 'status=0\\n'
+      else
+        printf 'status=%s\\n' "$?"
+      fi
+    `,
+    {
+      env: {
+        PATH: `${fakeBinDir}:${process.env.PATH}`,
+      },
+    },
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /status=1/);
+  const log = fs.readFileSync(logFile, 'utf8');
+  assert.match(log, /ERROR notify_failed provider=feishu reason=http_status status=500 summary=upstream_failed/);
 });

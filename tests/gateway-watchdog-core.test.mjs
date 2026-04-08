@@ -317,6 +317,76 @@ test('restart: returns success when install/start repair succeeds after restart 
   assert.match(output, /status=0/);
 });
 
+test('restart: returns install rc when repair install fails after restart reports service not loaded', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-restart-install-fail-'));
+  const restartOutputFile = path.join(tempDir, 'restart.out');
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    RESTART_OUTPUT_FILE="${restartOutputFile}"
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'service not loaded\\n'
+          return 3
+          ;;
+        "gateway install")
+          printf 'install failed\\n'
+          return 11
+          ;;
+        "gateway start")
+          printf 'started\\n'
+          return 0
+          ;;
+      esac
+      return 99
+    }
+    if restart_gateway; then
+      printf 'status=0\\n'
+    else
+      printf 'status=%s\\n' "$?"
+    fi
+  `);
+
+  assert.match(output, /status=11/);
+});
+
+test('restart: returns start rc when repair start fails after install succeeds', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-restart-start-fail-'));
+  const restartOutputFile = path.join(tempDir, 'restart.out');
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    RESTART_OUTPUT_FILE="${restartOutputFile}"
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'service not loaded\\n'
+          return 3
+          ;;
+        "gateway install")
+          printf 'installed\\n'
+          return 0
+          ;;
+        "gateway start")
+          printf 'start failed\\n'
+          return 17
+          ;;
+      esac
+      return 99
+    }
+    if restart_gateway; then
+      printf 'status=0\\n'
+    else
+      printf 'status=%s\\n' "$?"
+    fi
+  `);
+
+  assert.match(output, /status=17/);
+});
+
 test('lock: stale lock is reaped and reacquired before taking ownership', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-lock-stale-'));
   const lockDir = path.join(tempDir, 'gateway.lock');
