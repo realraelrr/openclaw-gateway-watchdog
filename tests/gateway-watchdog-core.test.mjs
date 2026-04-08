@@ -179,6 +179,50 @@ test('public paths: OPENCLAW_HOME drives env file lookup and derived state/log p
   assert.match(output, /NOTIFIER=feishu/);
 });
 
+test('config precedence: env file path overrides replace derived default state/log paths when process env leaves them unset', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-public-override-'));
+  const envFile = path.join(tempDir, 'watchdog.env');
+  const stateDirOverride = path.join(tempDir, 'custom-state');
+  const logDirOverride = path.join(tempDir, 'custom-logs');
+
+  fs.writeFileSync(
+    envFile,
+    [
+      `WATCHDOG_STATE_DIR=${stateDirOverride}`,
+      `WATCHDOG_LOG_DIR=${logDirOverride}`,
+      '',
+    ].join('\n'),
+  );
+
+  const output = runBash(
+    `
+      source "${corePath}"
+      load_watchdog_config
+      printf '%s\\n' \
+        "WATCHDOG_STATE_DIR=$WATCHDOG_STATE_DIR" \
+        "WATCHDOG_LOG_DIR=$WATCHDOG_LOG_DIR" \
+        "STATE_FILE=$STATE_FILE" \
+        "LOG_FILE=$LOG_FILE"
+    `,
+    {
+      env: {
+        WATCHDOG_ENV_FILE: envFile,
+      },
+    },
+  );
+
+  assert.match(output, new RegExp(`WATCHDOG_STATE_DIR=${escapeForRegex(stateDirOverride)}`));
+  assert.match(output, new RegExp(`WATCHDOG_LOG_DIR=${escapeForRegex(logDirOverride)}`));
+  assert.match(
+    output,
+    new RegExp(`STATE_FILE=${escapeForRegex(path.join(stateDirOverride, 'gateway_watchdog_state.json'))}`),
+  );
+  assert.match(
+    output,
+    new RegExp(`LOG_FILE=${escapeForRegex(path.join(logDirOverride, 'gateway-watchdog.log'))}`),
+  );
+});
+
 test('probe: sampled fixture uses real gateway status field names', () => {
   assert.equal(sampleGatewayStatus.service.loaded, true);
   assert.equal(sampleGatewayStatus.service.runtime.status, 'running');
@@ -252,7 +296,7 @@ test('probe: returns fail on non-zero openclaw exit', () => {
   assert.equal(output.trim(), 'fail');
 });
 
-test('retries: POST_RESTART_RETRIES drives recovery loop count', () => {
+test('retries: POST_RESTART_RETRIES drives the main recovery loop count before any neutral grace probe', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-retries-'));
   const countFile = path.join(tempDir, 'probe-count');
 
@@ -584,6 +628,77 @@ test('notify: watchdog_main reports recovery timeout explicitly after a clean re
   assert.match(output, /\[WATCHDOG\] Restart failed: recovery timed out/);
 });
 
+test('notify: watchdog_main reports restart succeeded when final recovery grace catches a late ok after neutral probes', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-notify-recovery-grace-'));
+  const notificationsFile = path.join(tempDir, 'notifications.log');
+  const probeCountFile = path.join(tempDir, 'probe-count');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${path.join(tempDir, 'state.json')}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    FAIL_THRESHOLD=1
+    COOLDOWN_SEC=300
+    POST_RESTART_RETRIES=2
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { :; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { printf '%s\\n' "$1" >> "${notificationsFile}"; }
+    init_runtime_paths() {
+      mkdir -p "$WATCHDOG_RUNTIME_TMP_DIR"
+      RESTART_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/restart.out"
+      NOTIFY_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/notify.out"
+    }
+    ensure_state() { :; }
+    read_state_field() {
+      case "$1" in
+        ".consecutive_failures"|".cooldown_until_epoch") printf '0\\n' ;;
+        *) printf '\\n' ;;
+      esac
+    }
+    write_state() { cat >/dev/null; }
+    sleep() { :; }
+    probe_gateway() {
+      local count
+      count="$(cat "${probeCountFile}" 2>/dev/null || printf '0')"
+      count=$((count + 1))
+      printf '%s\\n' "$count" > "${probeCountFile}"
+      case "$count" in
+        1) printf 'fail\\n' ;;
+        2|3) printf 'neutral\\n' ;;
+        4) printf 'ok\\n' ;;
+        *) printf 'fail\\n' ;;
+      esac
+    }
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'restarted\\n'
+          return 0
+          ;;
+      esac
+      return 99
+    }
+    watchdog_main
+    printf '\\nprobe_calls=%s\\n' "$(cat "${probeCountFile}")"
+    cat "${notificationsFile}"
+  `);
+
+  assert.match(output, /probe_calls=4/);
+  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
+  assert.match(output, /\[WATCHDOG\] Restart succeeded/);
+  assert.doesNotMatch(output, /recovery timed out/);
+});
+
 test('lock: stale lock is reaped and reacquired before taking ownership', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-lock-stale-'));
   const lockDir = path.join(tempDir, 'gateway.lock');
@@ -737,6 +852,26 @@ test('tmp: runtime temp files are created under watchdog runtime tmp dir', () =>
 
   assert.match(output, new RegExp(`restart=${runtimeTmpDir.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}/restart\\.`));
   assert.match(output, new RegExp(`notify=${runtimeTmpDir.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}/notify\\.`));
+});
+
+test('cleanup: empty temp-file variables do not delete matching hidden files from the current directory', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-cleanup-empty-'));
+  const keepBody = path.join(tempDir, '.keep.body');
+  const keepErr = path.join(tempDir, '.keep.err');
+
+  fs.writeFileSync(keepBody, 'body\n');
+  fs.writeFileSync(keepErr, 'err\n');
+
+  runBash(`
+    source "${corePath}"
+    cd "${tempDir}"
+    RESTART_OUTPUT_FILE=""
+    NOTIFY_OUTPUT_FILE=""
+    cleanup_runtime_paths
+  `);
+
+  assert.equal(fs.existsSync(keepBody), true);
+  assert.equal(fs.existsSync(keepErr), true);
 });
 
 test('tmp: watchdog scripts no longer use fixed /tmp/gateway-watchdog paths', () => {

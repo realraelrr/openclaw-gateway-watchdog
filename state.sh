@@ -86,6 +86,12 @@ init_runtime_paths() {
 }
 
 cleanup_runtime_paths() {
-  rm -f "$RESTART_OUTPUT_FILE" "$NOTIFY_OUTPUT_FILE"
-  rm -f "${NOTIFY_OUTPUT_FILE}".*.body "${NOTIFY_OUTPUT_FILE}".*.err 2>/dev/null || true
+  if [[ -n "${RESTART_OUTPUT_FILE:-}" ]]; then
+    rm -f "$RESTART_OUTPUT_FILE"
+  fi
+
+  if [[ -n "${NOTIFY_OUTPUT_FILE:-}" ]]; then
+    rm -f "$NOTIFY_OUTPUT_FILE"
+    rm -f "${NOTIFY_OUTPUT_FILE}".*.body "${NOTIFY_OUTPUT_FILE}".*.err 2>/dev/null || true
+  fi
 }

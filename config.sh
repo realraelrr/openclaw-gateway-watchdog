@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 
-derive_watchdog_paths() {
+derive_watchdog_seed_paths() {
   : "${OPENCLAW_HOME:=$HOME/.openclaw}"
+  : "${WATCHDOG_ENV_FILE:=$OPENCLAW_HOME/config/watchdog.env}"
+}
+
+derive_watchdog_paths() {
+  derive_watchdog_seed_paths
   : "${WATCHDOG_STATE_DIR:=$OPENCLAW_HOME/.state/runtime}"
   : "${WATCHDOG_LOG_DIR:=$OPENCLAW_HOME/logs}"
-  : "${WATCHDOG_ENV_FILE:=$OPENCLAW_HOME/config/watchdog.env}"
   : "${STATE_FILE:=$WATCHDOG_STATE_DIR/gateway_watchdog_state.json}"
   : "${WATCHDOG_DISABLE_FILE:=$WATCHDOG_STATE_DIR/gateway_watchdog.disabled}"
   : "${WATCHDOG_LOCK_DIR:=$WATCHDOG_STATE_DIR/gateway_watchdog.lock}"
@@ -51,7 +55,7 @@ apply_watchdog_defaults() {
 }
 
 load_watchdog_config() {
-  derive_watchdog_paths
+  derive_watchdog_seed_paths
   load_watchdog_env_file "$WATCHDOG_ENV_FILE"
   apply_watchdog_defaults
   derive_watchdog_paths

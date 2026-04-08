@@ -199,14 +199,23 @@ wait_for_gateway_recovery() {
   local attempt=1
   local post_restart_retries="${POST_RESTART_RETRIES:-3}"
   local post_restart_sleep_sec="${POST_RESTART_SLEEP_SEC:-5}"
+  local probe_result=""
 
   while (( attempt <= post_restart_retries )); do
     sleep "$post_restart_sleep_sec"
-    if [[ "$(probe_gateway)" == "ok" ]]; then
+    probe_result="$(probe_gateway)"
+    if [[ "$probe_result" == "ok" ]]; then
       return 0
     fi
     attempt=$((attempt + 1))
   done
+
+  if [[ "$probe_result" == "neutral" ]]; then
+    sleep "$post_restart_sleep_sec"
+    if [[ "$(probe_gateway)" == "ok" ]]; then
+      return 0
+    fi
+  fi
 
   return 1
 }
