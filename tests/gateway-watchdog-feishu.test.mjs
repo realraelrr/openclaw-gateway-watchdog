@@ -6,15 +6,16 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const watchdogDir = path.resolve(__dirname, '..');
+const repoRoot = path.resolve(__dirname, '..');
+const launchdDir = path.join(repoRoot, 'launchd');
 
-const core = fs.readFileSync(path.join(watchdogDir, 'watchdog-core.sh'), 'utf8');
-const discord = fs.readFileSync(path.join(watchdogDir, 'notifiers', 'discord.sh'), 'utf8');
-const feishu = fs.readFileSync(path.join(watchdogDir, 'notifiers', 'feishu.sh'), 'utf8');
-const composite = fs.readFileSync(path.join(watchdogDir, 'notifiers', 'composite.sh'), 'utf8');
-const readme = fs.readFileSync(path.join(watchdogDir, 'README.md'), 'utf8');
+const core = fs.readFileSync(path.join(repoRoot, 'watchdog-core.sh'), 'utf8');
+const discord = fs.readFileSync(path.join(repoRoot, 'notifiers', 'discord.sh'), 'utf8');
+const feishu = fs.readFileSync(path.join(repoRoot, 'notifiers', 'feishu.sh'), 'utf8');
+const composite = fs.readFileSync(path.join(repoRoot, 'notifiers', 'composite.sh'), 'utf8');
+const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
 const plistTemplate = fs.readFileSync(
-  path.join(watchdogDir, 'ai.openclaw.gateway-watchdog.plist.template'),
+  path.join(launchdDir, 'ai.openclaw.gateway-watchdog.plist.template'),
   'utf8',
 );
 

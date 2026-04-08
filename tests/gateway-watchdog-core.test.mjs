@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -377,4 +377,25 @@ test('tmp: watchdog scripts no longer use fixed /tmp/gateway-watchdog paths', ()
 
   assert.doesNotMatch(coreScript, /\/tmp\/gateway-watchdog-/);
   assert.doesNotMatch(stateScript, /\/tmp\/gateway-watchdog-/);
+});
+
+test('repo: public repo files contain no hard-coded private home paths outside explicit fixtures', () => {
+  const privatePathNeedle = '/Users' + '/rael';
+  const leakScan = spawnSync(
+    'rg',
+    [
+      '--hidden',
+      '-n',
+      privatePathNeedle,
+      '.',
+      '--glob',
+      '!tests/fixtures/gateway-status.sample.json',
+      '--glob',
+      '!.git/**',
+    ],
+    { cwd: watchdogDir, encoding: 'utf8' },
+  );
+
+  assert.equal(leakScan.status, 1, leakScan.stdout || leakScan.stderr);
+  assert.equal(leakScan.stdout.trim(), '');
 });
