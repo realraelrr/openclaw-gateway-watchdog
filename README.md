@@ -75,6 +75,7 @@ The watchdog env file is parsed through an allowlisted `key=value` reader. It do
    - restart triggered
    - restart succeeded
    - restart failed
+   - restart failed notifications include `gateway install failed`, `gateway start failed`, or `recovery timed out` when the watchdog can determine the reason
 
 ## Security Notes
 

@@ -75,8 +75,9 @@ test('composite: module sources both providers and aggregates success across the
   assert.match(composite, /return "\$overall_success"/);
 });
 
-test('notify: watchdog restart flow now uses notify_send at the three alert call sites', () => {
-  assert.equal(countMatches(core, 'notify_send "[WATCHDOG]'), 3);
+test('notify: watchdog restart flow keeps two direct notify_send call sites plus one formatted failure path', () => {
+  assert.equal(countMatches(core, 'notify_send "[WATCHDOG]'), 2);
+  assert.match(core, /notify_send "\$\(format_restart_failed_notification\)"/);
   assert.equal(countMatches(core, 'notify_all "[WATCHDOG]'), 0);
   assert.equal(countMatches(core, 'notify_discord "[WATCHDOG]'), 0);
 });
@@ -90,6 +91,9 @@ test('notify: core keeps no-op notifier defaults for fail-open startup', () => {
 test('notify: README still documents Discord and Feishu delivery', () => {
   assert.match(readme, /Send Discord and\/or Feishu webhook notifications only for:/);
   assert.match(readme, /FEISHU_WATCHDOG_WEBHOOK_URL/);
+  assert.match(readme, /gateway install failed/);
+  assert.match(readme, /gateway start failed/);
+  assert.match(readme, /recovery timed out/);
 });
 
 test('notify: README treats the private env file as the supported webhook secret source', () => {

@@ -320,12 +320,14 @@ test('restart: returns success when install/start repair succeeds after restart 
 test('restart: returns install rc when repair install fails after restart reports service not loaded', () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-restart-install-fail-'));
   const restartOutputFile = path.join(tempDir, 'restart.out');
+  const callsFile = path.join(tempDir, 'calls.log');
 
   const output = runBash(`
     source "${corePath}"
     log() { :; }
     RESTART_OUTPUT_FILE="${restartOutputFile}"
     run_openclaw() {
+      printf '%s %s\\n' "$1" "$2" >> "${callsFile}"
       case "$1 $2" in
         "gateway restart")
           printf 'service not loaded\\n'
@@ -350,6 +352,10 @@ test('restart: returns install rc when repair install fails after restart report
   `);
 
   assert.match(output, /status=11/);
+  const calls = fs.readFileSync(callsFile, 'utf8');
+  assert.match(calls, /gateway restart/);
+  assert.match(calls, /gateway install/);
+  assert.doesNotMatch(calls, /gateway start/);
 });
 
 test('restart: returns start rc when repair start fails after install succeeds', () => {
@@ -385,6 +391,197 @@ test('restart: returns start rc when repair start fails after install succeeds',
   `);
 
   assert.match(output, /status=17/);
+});
+
+test('notify: watchdog_main reports install failure explicitly in restart_failed notification', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-notify-install-fail-'));
+  const notificationsFile = path.join(tempDir, 'notifications.log');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${path.join(tempDir, 'state.json')}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    FAIL_THRESHOLD=1
+    COOLDOWN_SEC=300
+    POST_RESTART_RETRIES=2
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { :; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { printf '%s\\n' "$1" >> "${notificationsFile}"; }
+    init_runtime_paths() {
+      mkdir -p "$WATCHDOG_RUNTIME_TMP_DIR"
+      RESTART_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/restart.out"
+      NOTIFY_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/notify.out"
+    }
+    ensure_state() { :; }
+    read_state_field() {
+      case "$1" in
+        ".consecutive_failures"|".cooldown_until_epoch") printf '0\\n' ;;
+        *) printf '\\n' ;;
+      esac
+    }
+    write_state() { cat >/dev/null; }
+    probe_gateway() {
+      if [[ ! -f "${path.join(tempDir, 'probe-once')}" ]]; then
+        : > "${path.join(tempDir, 'probe-once')}"
+        printf 'fail\\n'
+      else
+        printf 'fail\\n'
+      fi
+    }
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'service not loaded\\n'
+          return 3
+          ;;
+        "gateway install")
+          printf 'install failed\\n'
+          return 11
+          ;;
+      esac
+      return 99
+    }
+    watchdog_main
+    cat "${notificationsFile}"
+  `);
+
+  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
+  assert.match(output, /\[WATCHDOG\] Restart failed: gateway install failed/);
+});
+
+test('notify: watchdog_main reports start failure explicitly in restart_failed notification', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-notify-start-fail-'));
+  const notificationsFile = path.join(tempDir, 'notifications.log');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${path.join(tempDir, 'state.json')}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    FAIL_THRESHOLD=1
+    COOLDOWN_SEC=300
+    POST_RESTART_RETRIES=2
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { :; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { printf '%s\\n' "$1" >> "${notificationsFile}"; }
+    init_runtime_paths() {
+      mkdir -p "$WATCHDOG_RUNTIME_TMP_DIR"
+      RESTART_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/restart.out"
+      NOTIFY_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/notify.out"
+    }
+    ensure_state() { :; }
+    read_state_field() {
+      case "$1" in
+        ".consecutive_failures"|".cooldown_until_epoch") printf '0\\n' ;;
+        *) printf '\\n' ;;
+      esac
+    }
+    write_state() { cat >/dev/null; }
+    probe_gateway() { printf 'fail\\n'; }
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'service not loaded\\n'
+          return 3
+          ;;
+        "gateway install")
+          printf 'installed\\n'
+          return 0
+          ;;
+        "gateway start")
+          printf 'start failed\\n'
+          return 17
+          ;;
+      esac
+      return 99
+    }
+    watchdog_main
+    cat "${notificationsFile}"
+  `);
+
+  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
+  assert.match(output, /\[WATCHDOG\] Restart failed: gateway start failed/);
+});
+
+test('notify: watchdog_main reports recovery timeout explicitly after a clean restart rc', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-notify-recovery-timeout-'));
+  const notificationsFile = path.join(tempDir, 'notifications.log');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${path.join(tempDir, 'state.json')}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    FAIL_THRESHOLD=1
+    COOLDOWN_SEC=300
+    POST_RESTART_RETRIES=2
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { :; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { printf '%s\\n' "$1" >> "${notificationsFile}"; }
+    init_runtime_paths() {
+      mkdir -p "$WATCHDOG_RUNTIME_TMP_DIR"
+      RESTART_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/restart.out"
+      NOTIFY_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/notify.out"
+    }
+    ensure_state() { :; }
+    read_state_field() {
+      case "$1" in
+        ".consecutive_failures"|".cooldown_until_epoch") printf '0\\n' ;;
+        *) printf '\\n' ;;
+      esac
+    }
+    write_state() { cat >/dev/null; }
+    probe_gateway() {
+      if [[ ! -f "${path.join(tempDir, 'probe-once')}" ]]; then
+        : > "${path.join(tempDir, 'probe-once')}"
+        printf 'fail\\n'
+      else
+        printf 'fail\\n'
+      fi
+    }
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'restarted\\n'
+          return 0
+          ;;
+      esac
+      return 99
+    }
+    watchdog_main
+    cat "${notificationsFile}"
+  `);
+
+  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
+  assert.match(output, /\[WATCHDOG\] Restart failed: recovery timed out/);
 });
 
 test('lock: stale lock is reaped and reacquired before taking ownership', () => {

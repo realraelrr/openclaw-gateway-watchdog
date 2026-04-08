@@ -14,6 +14,7 @@ OPENCLAW_BIN_RESOLVED=""
 NODE_BIN_RESOLVED=""
 DISCORD_WEBHOOK_URL=""
 FEISHU_WEBHOOK_URL=""
+RESTART_FAILURE_REASON=""
 
 notifier_init() { return 0; }
 notify_send() { return 0; }
@@ -145,20 +146,53 @@ run_openclaw() {
 restart_gateway() {
   local rc=0 install_rc=0 start_rc=0
 
+  RESTART_FAILURE_REASON=""
+
   run_openclaw gateway restart >"$RESTART_OUTPUT_FILE" 2>&1 || rc=$?
   if grep -Eqi 'service not loaded|service unit not found|not installed' "$RESTART_OUTPUT_FILE"; then
     log WARN restart_repair "action=install_then_start"
     run_openclaw gateway install >>"$RESTART_OUTPUT_FILE" 2>&1 || install_rc=$?
-    run_openclaw gateway start >>"$RESTART_OUTPUT_FILE" 2>&1 || start_rc=$?
     rc=0
     if (( install_rc != 0 )); then
+      RESTART_FAILURE_REASON="gateway_install_failed"
       rc="$install_rc"
-    elif (( start_rc != 0 )); then
-      rc="$start_rc"
+    else
+      run_openclaw gateway start >>"$RESTART_OUTPUT_FILE" 2>&1 || start_rc=$?
+      if (( start_rc != 0 )); then
+        RESTART_FAILURE_REASON="gateway_start_failed"
+        rc="$start_rc"
+      fi
     fi
+  elif (( rc != 0 )); then
+    RESTART_FAILURE_REASON="gateway_restart_failed"
   fi
 
   return "$rc"
+}
+
+format_restart_failed_notification() {
+  local host_name reason
+
+  host_name="$(hostname -s)"
+  reason="${RESTART_FAILURE_REASON:-}"
+
+  case "$reason" in
+    gateway_install_failed)
+      printf '[WATCHDOG] Restart failed: gateway install failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
+      ;;
+    gateway_start_failed)
+      printf '[WATCHDOG] Restart failed: gateway start failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
+      ;;
+    recovery_timeout)
+      printf '[WATCHDOG] Restart failed: recovery timed out (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
+      ;;
+    gateway_restart_failed)
+      printf '[WATCHDOG] Restart failed: gateway restart failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
+      ;;
+    *)
+      printf '[WATCHDOG] Restart failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
+      ;;
+  esac
 }
 
 wait_for_gateway_recovery() {
@@ -287,8 +321,11 @@ JSON
       log INFO restart_succeeded "restart_rc=$restart_rc summary=${restart_summary:-none} cooldown_until=$cooldown_until_epoch"
       notify_send "[WATCHDOG] Restart succeeded (host=$(hostname -s) retries=$POST_RESTART_RETRIES)" || true
     else
+      if (( restart_rc == 0 )); then
+        RESTART_FAILURE_REASON="recovery_timeout"
+      fi
       log ERROR restart_failed "restart_rc=$restart_rc summary=${restart_summary:-none} cooldown_until=$cooldown_until_epoch"
-      notify_send "[WATCHDOG] Restart failed (host=$(hostname -s) retries=$POST_RESTART_RETRIES)" || true
+      notify_send "$(format_restart_failed_notification)" || true
     fi
   fi
 
