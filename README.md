@@ -106,3 +106,7 @@ tail -n 20 "${WATCHDOG_LOG_DIR:-$HOME/.openclaw/logs}/gateway-watchdog.log"
 1. `NOTIFIER=composite` is synchronous and serial, so repeated notify failures can still cause tick drift.
 2. Notifier loading remains source-based rather than subprocess-isolated.
 3. This repository targets `macOS + launchd + OpenClaw CLI` only.
+
+## Repository
+
+Public GitHub repository: `https://github.com/realraelrr/openclaw-gateway-watchdog`
