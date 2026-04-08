@@ -14,7 +14,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
-    <string>/Users/rael/.openclaw/scripts/watchdog/gateway-watchdog.sh</string>
+    <string>__WATCHDOG_SCRIPT_PATH__</string>
   </array>
 
   <key>EnvironmentVariables</key>
@@ -22,7 +22,7 @@
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>WATCHDOG_ENV_FILE</key>
-    <string>/Users/rael/.openclaw/config/watchdog.env</string>
+    <string>__WATCHDOG_ENV_FILE__</string>
     <key>DISCORD_WATCHDOG_WEBHOOK_URL</key>
     <string></string>
     <key>FEISHU_WATCHDOG_WEBHOOK_URL</key>
@@ -30,9 +30,9 @@
   </dict>
 
   <key>StandardOutPath</key>
-  <string>/Users/rael/.openclaw/logs/gateway-watchdog.log</string>
+  <string>__WATCHDOG_LOG_FILE__</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/rael/.openclaw/logs/gateway-watchdog.log</string>
+  <string>__WATCHDOG_LOG_FILE__</string>
 </dict>
 </plist>

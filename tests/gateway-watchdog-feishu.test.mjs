@@ -14,6 +14,10 @@ const discord = fs.readFileSync(path.join(repoRoot, 'notifiers', 'discord.sh'), 
 const feishu = fs.readFileSync(path.join(repoRoot, 'notifiers', 'feishu.sh'), 'utf8');
 const composite = fs.readFileSync(path.join(repoRoot, 'notifiers', 'composite.sh'), 'utf8');
 const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+const installLaunchAgent = fs.readFileSync(
+  path.join(launchdDir, 'install-gateway-watchdog-launchagent.sh'),
+  'utf8',
+);
 const plistTemplate = fs.readFileSync(
   path.join(launchdDir, 'ai.openclaw.gateway-watchdog.plist.template'),
   'utf8',
@@ -82,4 +86,20 @@ test('notify: README still documents Discord and Feishu delivery', () => {
 test('notify: LaunchAgent template still exposes both webhook environment variables', () => {
   assert.match(plistTemplate, /<key>DISCORD_WATCHDOG_WEBHOOK_URL<\/key>/);
   assert.match(plistTemplate, /<key>FEISHU_WATCHDOG_WEBHOOK_URL<\/key>/);
+});
+
+test('launchd: plist template uses placeholders instead of user-specific absolute paths', () => {
+  assert.match(plistTemplate, /__WATCHDOG_SCRIPT_PATH__/);
+  assert.match(plistTemplate, /__WATCHDOG_ENV_FILE__/);
+  assert.match(plistTemplate, /__WATCHDOG_LOG_FILE__/);
+  assert.doesNotMatch(plistTemplate, /\/Users\/rael\/\.openclaw/);
+});
+
+test('launchd: install script derives repo-root watchdog paths instead of fixed user defaults', () => {
+  assert.match(installLaunchAgent, /REPO_ROOT="\$\(cd "\$SCRIPT_DIR\/\.\." && pwd\)"/);
+  assert.match(installLaunchAgent, /OPENCLAW_HOME="\$\{OPENCLAW_HOME:-\$HOME\/\.openclaw\}"/);
+  assert.match(installLaunchAgent, /WATCHDOG_ENV_FILE="\$\{WATCHDOG_ENV_FILE:-\$OPENCLAW_HOME\/config\/watchdog\.env\}"/);
+  assert.match(installLaunchAgent, /WATCHDOG_LOG_DIR="\$\{WATCHDOG_LOG_DIR:-\$OPENCLAW_HOME\/logs\}"/);
+  assert.match(installLaunchAgent, /WATCHDOG_SCRIPT_PATH="\$REPO_ROOT\/gateway-watchdog\.sh"/);
+  assert.doesNotMatch(installLaunchAgent, /WATCHDOG_ENV_FILE_DEFAULT="\/Users\/rael/);
 });
