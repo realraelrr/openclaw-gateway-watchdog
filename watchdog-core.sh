@@ -150,10 +150,10 @@ restart_gateway() {
     log WARN restart_repair "action=install_then_start"
     run_openclaw gateway install >>"$RESTART_OUTPUT_FILE" 2>&1 || install_rc=$?
     run_openclaw gateway start >>"$RESTART_OUTPUT_FILE" 2>&1 || start_rc=$?
-    if (( rc == 0 && install_rc != 0 )); then
+    rc=0
+    if (( install_rc != 0 )); then
       rc="$install_rc"
-    fi
-    if (( rc == 0 && start_rc != 0 )); then
+    elif (( start_rc != 0 )); then
       rc="$start_rc"
     fi
   fi
@@ -183,6 +183,11 @@ watchdog_cleanup() {
   release_lock
 }
 
+watchdog_finalize() {
+  trap - EXIT
+  watchdog_cleanup
+}
+
 watchdog_main() {
   local now_iso now_epoch probe
   local consecutive_failures cooldown_until_epoch last_ok_at last_failure_at last_restart_at
@@ -197,6 +202,7 @@ watchdog_main() {
   if ! acquire_watchdog_lock; then
     return 0
   fi
+  trap 'watchdog_cleanup' EXIT
   init_runtime_paths
   ensure_state
 
@@ -222,7 +228,7 @@ watchdog_main() {
     write_state <<JSON
 {"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
-    watchdog_cleanup
+    watchdog_finalize
     return 0
   fi
 
@@ -234,11 +240,11 @@ JSON
     write_state <<JSON
 {"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
-    watchdog_cleanup
+    watchdog_finalize
     return 0
   elif [[ "$probe" == "neutral" ]]; then
     log INFO state_hold "reason=probe_neutral failures=$consecutive_failures"
-    watchdog_cleanup
+    watchdog_finalize
     return 0
   fi
 
@@ -251,7 +257,7 @@ JSON
     write_state <<JSON
 {"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
-    watchdog_cleanup
+    watchdog_finalize
     return 0
   fi
 
@@ -293,7 +299,7 @@ JSON
   write_state <<JSON
 {"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
-  watchdog_cleanup
+  watchdog_finalize
 }
 
 main() {

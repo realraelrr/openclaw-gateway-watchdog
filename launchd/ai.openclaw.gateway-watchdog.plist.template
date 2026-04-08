@@ -23,10 +23,6 @@
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>WATCHDOG_ENV_FILE</key>
     <string>__WATCHDOG_ENV_FILE__</string>
-    <key>DISCORD_WATCHDOG_WEBHOOK_URL</key>
-    <string></string>
-    <key>FEISHU_WATCHDOG_WEBHOOK_URL</key>
-    <string></string>
   </dict>
 
   <key>StandardOutPath</key>

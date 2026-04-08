@@ -20,7 +20,7 @@ probe_gateway() {
   if jq -e '.service.loaded == true and .service.runtime.status == "running" and .rpc.ok == true and .health.healthy == true' >/dev/null 2>&1 <<<"$out"; then
     log INFO probe_ok "rc=0"
     echo "ok"
-  elif jq -e '.service.loaded == true and (.service.runtime.status == "active" or .service.runtime.status == "running") and (.rpc.ok != true or .health.healthy != true)' >/dev/null 2>&1 <<<"$out"; then
+  elif jq -e '.service.loaded == true and (.service.runtime.status == "active" or .service.runtime.status == "running") and .rpc.ok != true and .health.healthy == true' >/dev/null 2>&1 <<<"$out"; then
     log INFO probe_neutral "reason=loaded_but_not_ready"
     echo "neutral"
   else

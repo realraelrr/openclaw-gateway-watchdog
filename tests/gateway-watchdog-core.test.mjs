@@ -217,6 +217,26 @@ test('probe: returns neutral for loaded running gateway that is not rpc-ready', 
   assert.equal(output.trim(), 'neutral');
 });
 
+test('probe: returns fail when health reports unhealthy even if service is running', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-probe-unhealthy-'));
+  const jsonPath = path.join(tempDir, 'gateway-status.json');
+  const unhealthyStatus = structuredClone(sampleGatewayStatus);
+
+  unhealthyStatus.rpc.ok = true;
+  unhealthyStatus.health.healthy = false;
+  fs.writeFileSync(jsonPath, `${JSON.stringify(unhealthyStatus)}\n`);
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    OPENCLAW_BIN_RESOLVED="/bin/echo"
+    run_openclaw() { cat "${jsonPath}"; }
+    printf '%s\\n' "$(probe_gateway)"
+  `);
+
+  assert.equal(output.trim(), 'fail');
+});
+
 test('probe: returns fail on non-zero openclaw exit', () => {
   const output = runBash(`
     source "${corePath}"
@@ -260,6 +280,41 @@ test('retries: POST_RESTART_RETRIES drives recovery loop count', () => {
 
   assert.match(output, /probe_calls=5/);
   assert.match(output, /result=fail/);
+});
+
+test('restart: returns success when install/start repair succeeds after restart reports service not loaded', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-restart-repair-'));
+  const restartOutputFile = path.join(tempDir, 'restart.out');
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    RESTART_OUTPUT_FILE="${restartOutputFile}"
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway restart")
+          printf 'service not loaded\\n'
+          return 3
+          ;;
+        "gateway install")
+          printf 'installed\\n'
+          return 0
+          ;;
+        "gateway start")
+          printf 'started\\n'
+          return 0
+          ;;
+      esac
+      return 99
+    }
+    if restart_gateway; then
+      printf 'status=0\\n'
+    else
+      printf 'status=%s\\n' "$?"
+    fi
+  `);
+
+  assert.match(output, /status=0/);
 });
 
 test('lock: stale lock is reaped and reacquired before taking ownership', () => {
@@ -332,6 +387,52 @@ test('lock: second instance logs watchdog_locked and exits without taking lock',
 
   assert.match(output, /result=locked/);
   assert.match(output, /event=watchdog_locked/);
+});
+
+test('cleanup: watchdog_main releases lock when state write fails after lock acquisition', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-cleanup-trap-'));
+  const lockDir = path.join(tempDir, 'gateway.lock');
+  const result = spawnSync(
+    '/bin/bash',
+    [
+      '-lc',
+      `
+        source "${corePath}"
+        WATCHDOG_LOCK_DIR="${lockDir}"
+        WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+        LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+        STATE_FILE="${path.join(tempDir, 'state.json')}"
+        WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+        FAIL_THRESHOLD=3
+        COOLDOWN_SEC=300
+        POST_RESTART_RETRIES=1
+        POST_RESTART_SLEEP_SEC=0
+        WATCHDOG_ENABLED=1
+        log() { :; }
+        load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+        load_notifier() { :; }
+        notifier_init() { :; }
+        notifier_cleanup() { :; }
+        resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+        resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+        probe_gateway() { printf 'ok\\n'; }
+        init_runtime_paths() { :; }
+        ensure_state() { :; }
+        read_state_field() {
+          case "$1" in
+            ".consecutive_failures"|".cooldown_until_epoch") printf '0\\n' ;;
+            *) printf '\\n' ;;
+          esac
+        }
+        write_state() { return 1; }
+        watchdog_main
+      `,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.equal(fs.existsSync(lockDir), false);
 });
 
 test('state: write_state uses atomic temp file without leaving fixed .tmp artifact', () => {

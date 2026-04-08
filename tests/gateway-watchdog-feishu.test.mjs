@@ -83,9 +83,14 @@ test('notify: README still documents Discord and Feishu delivery', () => {
   assert.match(readme, /FEISHU_WATCHDOG_WEBHOOK_URL/);
 });
 
-test('notify: LaunchAgent template still exposes both webhook environment variables', () => {
-  assert.match(plistTemplate, /<key>DISCORD_WATCHDOG_WEBHOOK_URL<\/key>/);
-  assert.match(plistTemplate, /<key>FEISHU_WATCHDOG_WEBHOOK_URL<\/key>/);
+test('notify: README treats the private env file as the supported webhook secret source', () => {
+  assert.match(readme, /Webhook URLs are secrets and should live in the private env file/);
+  assert.doesNotMatch(readme, /LaunchAgent environment variables/);
+});
+
+test('notify: LaunchAgent template no longer carries empty webhook placeholders', () => {
+  assert.doesNotMatch(plistTemplate, /DISCORD_WATCHDOG_WEBHOOK_URL/);
+  assert.doesNotMatch(plistTemplate, /FEISHU_WATCHDOG_WEBHOOK_URL/);
 });
 
 test('launchd: plist template uses placeholders instead of user-specific absolute paths', () => {

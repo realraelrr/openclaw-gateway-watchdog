@@ -79,7 +79,7 @@ The watchdog env file is parsed through an allowlisted `key=value` reader. It do
 ## Security Notes
 
 1. Do not commit the private watchdog env file; only commit `config.example.env`.
-2. Webhook URLs are secrets and should live in the private env file or in LaunchAgent environment variables.
+2. Webhook URLs are secrets and should live in the private env file.
 3. Notifier loading is whitelist-based and restricted to the controlled `notifiers/` directory.
 4. Secret env files are parsed, not executed.
 
