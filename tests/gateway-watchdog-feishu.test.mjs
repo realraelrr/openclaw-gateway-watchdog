@@ -16,6 +16,7 @@ const discord = fs.readFileSync(path.join(repoRoot, 'notifiers', 'discord.sh'), 
 const feishu = fs.readFileSync(path.join(repoRoot, 'notifiers', 'feishu.sh'), 'utf8');
 const composite = fs.readFileSync(path.join(repoRoot, 'notifiers', 'composite.sh'), 'utf8');
 const readme = fs.readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+const readmeZhCN = fs.readFileSync(path.join(repoRoot, 'README.zh-CN.md'), 'utf8');
 const installLaunchAgent = fs.readFileSync(
   path.join(launchdDir, 'install-gateway-watchdog-launchagent.sh'),
   'utf8',
@@ -88,8 +89,9 @@ test('notify: core keeps no-op notifier defaults for fail-open startup', () => {
   assert.match(core, /notifier_cleanup\(\) \{ return 0; \}/);
 });
 
-test('notify: README still documents Discord and Feishu delivery', () => {
-  assert.match(readme, /Send Discord and\/or Feishu webhook notifications only for:/);
+test('notify: README still documents product scope and Discord or Feishu delivery', () => {
+  assert.match(readme, /Keep your local OpenClaw gateway recoverable on macOS/);
+  assert.match(readme, /Sends Feishu and\/or Discord webhook notifications/);
   assert.match(readme, /FEISHU_WATCHDOG_WEBHOOK_URL/);
   assert.match(readme, /gateway install failed/);
   assert.match(readme, /gateway start failed/);
@@ -99,6 +101,13 @@ test('notify: README still documents Discord and Feishu delivery', () => {
 test('notify: README treats the private env file as the supported webhook secret source', () => {
   assert.match(readme, /Webhook URLs are secrets and should live in the private env file/);
   assert.doesNotMatch(readme, /LaunchAgent environment variables/);
+});
+
+test('docs: repository includes a Chinese README linked from the main README', () => {
+  assert.match(readme, /\[中文文档\]\(\.\/README\.zh-CN\.md\)/);
+  assert.match(readmeZhCN, /让你的本地 OpenClaw gateway 在 macOS 上更容易恢复/);
+  assert.match(readmeZhCN, /\[English README\]\(\.\/README\.md\)/);
+  assert.match(readmeZhCN, /FEISHU_WATCHDOG_WEBHOOK_URL/);
 });
 
 test('notify: LaunchAgent template no longer carries empty webhook placeholders', () => {

@@ -1,15 +1,42 @@
 # OpenClaw Gateway Watchdog
 
-macOS `launchd` watchdog for OpenClaw gateway health checks.
+Keep your local OpenClaw gateway recoverable on macOS.
+
+OpenClaw Gateway Watchdog is a small, production-minded `launchd` watchdog that probes `openclaw gateway status --json`, restarts or repairs the gateway when it goes unhealthy, and sends Feishu or Discord alerts when recovery begins, succeeds, or fails.
+
+[中文文档](./README.zh-CN.md)
 
 License: MIT
 
+## Why It Exists
+
+`launchd KeepAlive` can restart a crashed process, but it cannot tell the difference between:
+
+- a healthy gateway
+- a loaded-but-not-ready gateway
+- a broken gateway that still has a process
+
+This project adds health-check driven recovery on top of macOS `launchd`, without adding another daemon, container, or external monitoring stack.
+
+## What It Does
+
+- Probes `openclaw gateway status --json` on every tick instead of relying on PID checks.
+- Treats `service.loaded=true`, `service.runtime.status="running"`, `rpc.ok=true`, and `health.healthy=true` as the healthy contract.
+- Treats loaded-but-not-ready states as `neutral` so cold starts do not immediately trigger a restart.
+- Applies cooldown protection so the gateway is not restarted in a tight loop.
+- Uses `openclaw gateway restart` first, then falls back to `gateway install` plus `gateway start` when the service is not loaded.
+- Sends Feishu and/or Discord webhook notifications for restart triggered, restart succeeded, and restart failed.
+
 ## Support Scope
+
+This repository intentionally supports only:
 
 - macOS
 - `launchd`
 - OpenClaw CLI
 - Discord and Feishu webhooks
+
+It is not a generic process supervisor and it is not a cross-platform watchdog.
 
 ## Prerequisites
 
@@ -30,6 +57,26 @@ License: MIT
    - `launchctl list | rg "ai\.openclaw\.gateway-watchdog"`
 5. Verify live ticks in the watchdog log:
    - `tail -n 20 "${WATCHDOG_LOG_DIR:-$HOME/.openclaw/logs}/gateway-watchdog.log"`
+
+## Example Notifications
+
+```text
+[WATCHDOG] Gateway unhealthy, restarting (failures=3 host=My-Mac)
+[WATCHDOG] Restart succeeded (host=My-Mac retries=6)
+[WATCHDOG] Restart failed: gateway install failed (host=My-Mac retries=6)
+[WATCHDOG] Restart failed: gateway start failed (host=My-Mac retries=6)
+[WATCHDOG] Restart failed: recovery timed out (host=My-Mac retries=6)
+```
+
+Restart failed notifications include `gateway install failed`, `gateway start failed`, or `recovery timed out` when the watchdog can determine the reason.
+
+## How It Works
+
+1. `launchd` invokes `gateway-watchdog.sh` as the stable wrapper entrypoint.
+2. The wrapper sources `watchdog-core.sh` and calls `watchdog_main`.
+3. The watchdog probes `openclaw gateway status --json` on every tick.
+4. Consecutive failures are tracked in `gateway_watchdog_state.json`.
+5. When the failure threshold is reached, the watchdog sends a restart-triggered notification, attempts recovery, then sends either a success or failure notification.
 
 ## Configuration
 
@@ -58,25 +105,6 @@ Runtime and behavior variables:
 
 The watchdog env file is parsed through an allowlisted `key=value` reader. It does not `source` secret env files.
 
-## Behavior
-
-1. `launchd` invokes `gateway-watchdog.sh` as the stable wrapper entrypoint.
-2. The wrapper sources `watchdog-core.sh` and calls `watchdog_main`.
-3. The watchdog probes `openclaw gateway status --json` on every tick.
-4. Healthy means:
-   - `service.loaded=true`
-   - `service.runtime.status="running"`
-   - `rpc.ok=true`
-   - `health.healthy=true`
-5. Loaded-but-not-ready states are treated as `neutral`.
-6. Consecutive failures are tracked in `gateway_watchdog_state.json`.
-7. Gateway restarts are cooldown-protected.
-8. Send Discord and/or Feishu webhook notifications only for:
-   - restart triggered
-   - restart succeeded
-   - restart failed
-   - restart failed notifications include `gateway install failed`, `gateway start failed`, or `recovery timed out` when the watchdog can determine the reason
-
 ## Security Notes
 
 1. Do not commit the private watchdog env file; only commit `config.example.env`.
@@ -101,6 +129,20 @@ node --test tests/gateway-watchdog-feishu.test.mjs tests/gateway-watchdog-core.t
 launchctl list | rg "ai\.openclaw\.gateway-watchdog"
 tail -n 20 "${WATCHDOG_LOG_DIR:-$HOME/.openclaw/logs}/gateway-watchdog.log"
 ```
+
+## FAQ
+
+### Why use a separate `watchdog.env` instead of reusing the whole OpenClaw `.env`?
+
+Because the watchdog only needs a small, explicit allowlisted subset of settings. Keeping a dedicated env file reduces coupling, limits secret exposure, and makes the public repository reusable.
+
+### Why `launchd` instead of another always-on daemon?
+
+Because v1 is intentionally a native macOS tool. `launchd` already exists, survives login sessions correctly, and is the right lifecycle owner for a user-level service on macOS.
+
+### Can I use this for non-OpenClaw services?
+
+Not without modification. The current probe and repair logic are intentionally built around `openclaw gateway status --json` and related OpenClaw CLI commands.
 
 ## Known Limitations
 
