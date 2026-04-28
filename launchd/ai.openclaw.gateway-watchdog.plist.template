@@ -11,6 +11,9 @@
   <key>StartInterval</key>
   <integer>30</integer>
 
+  <key>WorkingDirectory</key>
+  <string>__WATCHDOG_WORKING_DIR__</string>
+
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>

@@ -15,6 +15,9 @@ NODE_BIN_RESOLVED=""
 DISCORD_WEBHOOK_URL=""
 FEISHU_WEBHOOK_URL=""
 RESTART_FAILURE_REASON=""
+PROBE_REASON="ok"
+PROBE_STATUS="ok"
+RUN_PROBE_RESULT=""
 
 notifier_init() { return 0; }
 notify_send() { return 0; }
@@ -40,6 +43,112 @@ load_notifier() {
 
 log() {
   printf '%s level=%s event=%s %s\n' "$(date -u +%FT%TZ)" "$1" "$2" "${3:-}" >> "$LOG_FILE"
+}
+
+short_hostname() {
+  hostname -s 2>/dev/null || hostname
+}
+
+event_title() {
+  case "$1" in
+    restart_triggered) printf '自动重启已触发\n' ;;
+    restart_succeeded) printf '自动重启已恢复\n' ;;
+    restart_failed) printf '自动重启失败\n' ;;
+    manual_restart_triggered) printf '手动重启已触发\n' ;;
+    manual_restart_succeeded) printf '手动重启成功\n' ;;
+    manual_restart_failed) printf '手动重启失败\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+event_source() {
+  case "$1" in
+    manual_restart_*) printf 'local CLI\n' ;;
+    *) printf 'passive watchdog\n' ;;
+  esac
+}
+
+reason_component() {
+  case "$1" in
+    openclaw_bin_not_found|node_missing) printf 'Watchdog 运行环境\n' ;;
+    openclaw_status_failed) printf 'OpenClaw CLI / gateway status\n' ;;
+    gateway_status_unhealthy|loaded_but_not_ready|recovery_timeout) printf 'OpenClaw Gateway / 健康状态\n' ;;
+    gateway_restart_failed|gateway_install_failed|gateway_start_failed) printf 'OpenClaw Gateway / 恢复命令\n' ;;
+    manual_request) printf '本地主动控制\n' ;;
+    ok) printf '健康检查\n' ;;
+    *) printf '未知环节\n' ;;
+  esac
+}
+
+reason_summary() {
+  case "$1" in
+    openclaw_bin_not_found) printf '找不到可执行的 openclaw CLI\n' ;;
+    node_missing) printf '找不到可执行的 node；如果 openclaw 本身可执行，仍会尝试直接运行\n' ;;
+    openclaw_status_failed) printf 'openclaw gateway status --json 执行失败\n' ;;
+    gateway_status_unhealthy) printf 'openclaw gateway status --json 未满足健康合同\n' ;;
+    loaded_but_not_ready) printf 'gateway 已加载但 RPC 尚未 ready\n' ;;
+    gateway_restart_failed) printf 'openclaw gateway restart 执行失败\n' ;;
+    gateway_install_failed) printf 'gateway install failed\n' ;;
+    gateway_start_failed) printf 'gateway start failed\n' ;;
+    recovery_timeout) printf '重启命令返回后健康检查仍未恢复\n' ;;
+    manual_request) printf '本地手动请求\n' ;;
+    ok) printf '健康检查通过\n' ;;
+    *) printf '未分类原因\n' ;;
+  esac
+}
+
+action_summary() {
+  case "$1" in
+    restart_gateway) printf '重启 OpenClaw gateway\n' ;;
+    none|"") printf '不执行重启\n' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
+format_notification() {
+  local event="$1"
+  local failure_count="$2"
+  local reason="${3:-${PROBE_REASON:-unknown}}"
+  local action="${4:-restart_gateway}"
+  local host title source component summary action_text
+
+  host="$(short_hostname)"
+  title="$(event_title "$event")"
+  source="$(event_source "$event")"
+  component="$(reason_component "$reason")"
+  summary="$(reason_summary "$reason")"
+  action_text="$(action_summary "$action")"
+
+  printf '[%s] %s\n\n主机: %s\n来源: %s\n故障环节: %s\n原因: %s - %s\n动作: %s\n连续失败: %s\nraw: event=%s host=%s failures=%s reason=%s action=%s\n' \
+    "${WATCHDOG_DISPLAY_NAME:-OpenClaw Gateway Watchdog}" \
+    "$title" \
+    "$host" \
+    "$source" \
+    "$component" \
+    "$reason" \
+    "$summary" \
+    "$action_text" \
+    "$failure_count" \
+    "$event" \
+    "$host" \
+    "$failure_count" \
+    "$reason" \
+    "$action"
+}
+
+usage() {
+  printf 'Usage: %s [restart gateway]\n' "${0##*/}" >&2
+}
+
+is_manual_restart_command() {
+  [[ "${1:-}" == "restart" || "${1:-}" == "--restart" ]]
+}
+
+manual_restart_action_for_target() {
+  case "${1:-}" in
+    gateway) printf 'restart_gateway\n' ;;
+    *) return 1 ;;
+  esac
 }
 
 resolve_latest_nvm_binary() {
@@ -143,6 +252,28 @@ run_openclaw() {
   "$OPENCLAW_BIN_RESOLVED" "$@"
 }
 
+run_probe_gateway() {
+  local output_file output temp_dir
+
+  temp_dir="${WATCHDOG_RUNTIME_TMP_DIR:-${TMPDIR:-/tmp}}"
+  mkdir -p "$temp_dir"
+  output_file="$(mktemp "$temp_dir/probe.XXXXXX")"
+
+  PROBE_REASON=""
+  PROBE_STATUS=""
+  RUN_PROBE_RESULT=""
+
+  probe_gateway > "$output_file"
+  output="$(tail -n 1 "$output_file" 2>/dev/null || true)"
+  rm -f "$output_file"
+
+  if [[ -z "${PROBE_STATUS:-}" ]]; then
+    PROBE_STATUS="$output"
+  fi
+
+  RUN_PROBE_RESULT="${PROBE_STATUS:-fail}"
+}
+
 restart_gateway() {
   local rc=0 install_rc=0 start_rc=0
 
@@ -170,31 +301,6 @@ restart_gateway() {
   return "$rc"
 }
 
-format_restart_failed_notification() {
-  local host_name reason
-
-  host_name="$(hostname -s)"
-  reason="${RESTART_FAILURE_REASON:-}"
-
-  case "$reason" in
-    gateway_install_failed)
-      printf '[WATCHDOG] Restart failed: gateway install failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
-      ;;
-    gateway_start_failed)
-      printf '[WATCHDOG] Restart failed: gateway start failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
-      ;;
-    recovery_timeout)
-      printf '[WATCHDOG] Restart failed: recovery timed out (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
-      ;;
-    gateway_restart_failed)
-      printf '[WATCHDOG] Restart failed: gateway restart failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
-      ;;
-    *)
-      printf '[WATCHDOG] Restart failed (host=%s retries=%s)\n' "$host_name" "$POST_RESTART_RETRIES"
-      ;;
-  esac
-}
-
 wait_for_gateway_recovery() {
   local attempt=1
   local post_restart_retries="${POST_RESTART_RETRIES:-3}"
@@ -203,7 +309,8 @@ wait_for_gateway_recovery() {
 
   while (( attempt <= post_restart_retries )); do
     sleep "$post_restart_sleep_sec"
-    probe_result="$(probe_gateway)"
+    run_probe_gateway
+    probe_result="$RUN_PROBE_RESULT"
     if [[ "$probe_result" == "ok" ]]; then
       return 0
     fi
@@ -212,7 +319,8 @@ wait_for_gateway_recovery() {
 
   if [[ "$probe_result" == "neutral" ]]; then
     sleep "$post_restart_sleep_sec"
-    if [[ "$(probe_gateway)" == "ok" ]]; then
+    run_probe_gateway
+    if [[ "$RUN_PROBE_RESULT" == "ok" ]]; then
       return 0
     fi
   fi
@@ -231,11 +339,62 @@ watchdog_finalize() {
   watchdog_cleanup
 }
 
+watchdog_manual_restart() {
+  local target="${1:-}" action="" rc=0
+
+  if ! action="$(manual_restart_action_for_target "$target")"; then
+    usage
+    return 64
+  fi
+
+  load_watchdog_config
+  load_notifier
+  notifier_init || true
+  mkdir -p "$(dirname "$LOG_FILE")"
+  touch "$LOG_FILE"
+  if ! acquire_watchdog_lock; then
+    return 0
+  fi
+  trap 'watchdog_cleanup' EXIT
+  init_runtime_paths
+
+  if ! resolve_openclaw_bin; then
+    RESTART_FAILURE_REASON="openclaw_bin_not_found"
+    log ERROR manual_restart_failed "target=$target action=$action reason=$RESTART_FAILURE_REASON"
+    notify_send "$(format_notification manual_restart_failed 0 "$RESTART_FAILURE_REASON" "$action")" || true
+    watchdog_finalize
+    return 1
+  fi
+  if ! resolve_node_bin; then
+    log WARN node_missing "hint=set_NODE_BIN"
+  fi
+
+  log INFO manual_restart_triggered "target=$target action=$action"
+  notify_send "$(format_notification manual_restart_triggered 0 manual_request "$action")" || true
+  restart_gateway || rc=$?
+
+  if (( rc == 0 )); then
+    log INFO manual_restart_succeeded "target=$target action=$action"
+    notify_send "$(format_notification manual_restart_succeeded 0 manual_request "$action")" || true
+  else
+    log ERROR manual_restart_failed "target=$target action=$action reason=${RESTART_FAILURE_REASON:-gateway_restart_failed}"
+    notify_send "$(format_notification manual_restart_failed 0 "${RESTART_FAILURE_REASON:-gateway_restart_failed}" "$action")" || true
+  fi
+
+  watchdog_finalize
+  return "$rc"
+}
+
 watchdog_main() {
-  local now_iso now_epoch probe
+  local now_iso now_epoch probe incident_reason
   local consecutive_failures cooldown_until_epoch last_ok_at last_failure_at last_restart_at
   local restart_rc restart_summary recovered
   local restarted=0
+
+  if is_manual_restart_command "${1:-}"; then
+    watchdog_manual_restart "${2:-}"
+    return $?
+  fi
 
   load_watchdog_config
   load_notifier
@@ -275,7 +434,8 @@ JSON
     return 0
   fi
 
-  probe="$(probe_gateway)"
+  run_probe_gateway
+  probe="$RUN_PROBE_RESULT"
   if [[ "$probe" == "ok" ]]; then
     consecutive_failures=0
     last_ok_at="$now_iso"
@@ -286,7 +446,7 @@ JSON
     watchdog_finalize
     return 0
   elif [[ "$probe" == "neutral" ]]; then
-    log INFO state_hold "reason=probe_neutral failures=$consecutive_failures"
+    log INFO state_hold "reason=${PROBE_REASON:-probe_neutral} failures=$consecutive_failures"
     watchdog_finalize
     return 0
   fi
@@ -294,6 +454,9 @@ JSON
   consecutive_failures=$((consecutive_failures + 1))
   last_failure_at="$now_iso"
   log WARN state_update "consecutive_failures=$consecutive_failures"
+  if [[ "${PROBE_REASON:-ok}" == "ok" ]]; then
+    PROBE_REASON="gateway_status_unhealthy"
+  fi
 
   if (( now_epoch < cooldown_until_epoch )); then
     log WARN cooldown_skip "until=$cooldown_until_epoch failures=$consecutive_failures"
@@ -306,11 +469,13 @@ JSON
 
   if (( consecutive_failures >= FAIL_THRESHOLD )); then
     restarted=1
+    incident_reason="${PROBE_REASON:-gateway_status_unhealthy}"
     log ERROR restart_triggered "failures=$consecutive_failures"
-    notify_send "[WATCHDOG] Gateway unhealthy, restarting (failures=$consecutive_failures host=$(hostname -s))" || true
+    notify_send "$(format_notification restart_triggered "$consecutive_failures" "$incident_reason" restart_gateway)" || true
     restart_rc=0
     if [[ -z "$OPENCLAW_BIN_RESOLVED" ]] || [[ ! -x "$OPENCLAW_BIN_RESOLVED" ]]; then
       restart_rc=127
+      RESTART_FAILURE_REASON="openclaw_bin_not_found"
       printf 'openclaw binary unavailable\n' >"$RESTART_OUTPUT_FILE"
     else
       restart_gateway || restart_rc=$?
@@ -328,13 +493,13 @@ JSON
       consecutive_failures=0
       last_ok_at="$(date -u +%FT%TZ)"
       log INFO restart_succeeded "restart_rc=$restart_rc summary=${restart_summary:-none} cooldown_until=$cooldown_until_epoch"
-      notify_send "[WATCHDOG] Restart succeeded (host=$(hostname -s) retries=$POST_RESTART_RETRIES)" || true
+      notify_send "$(format_notification restart_succeeded 0 "$incident_reason" restart_gateway)" || true
     else
       if (( restart_rc == 0 )); then
         RESTART_FAILURE_REASON="recovery_timeout"
       fi
       log ERROR restart_failed "restart_rc=$restart_rc summary=${restart_summary:-none} cooldown_until=$cooldown_until_epoch"
-      notify_send "$(format_restart_failed_notification)" || true
+      notify_send "$(format_notification restart_failed "$consecutive_failures" "${RESTART_FAILURE_REASON:-gateway_restart_failed}" restart_gateway)" || true
     fi
   fi
 

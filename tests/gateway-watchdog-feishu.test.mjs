@@ -76,9 +76,10 @@ test('composite: module sources both providers and aggregates success across the
   assert.match(composite, /return "\$overall_success"/);
 });
 
-test('notify: watchdog restart flow keeps two direct notify_send call sites plus one formatted failure path', () => {
-  assert.equal(countMatches(core, 'notify_send "[WATCHDOG]'), 2);
-  assert.match(core, /notify_send "\$\(format_restart_failed_notification\)"/);
+test('notify: watchdog restart flow uses the shared user-facing notification formatter', () => {
+  assert.equal(countMatches(core, 'notify_send "$(format_notification'), 7);
+  assert.doesNotMatch(core, /notify_send "\[WATCHDOG\]/);
+  assert.doesNotMatch(core, /format_restart_failed_notification/);
   assert.equal(countMatches(core, 'notify_all "[WATCHDOG]'), 0);
   assert.equal(countMatches(core, 'notify_discord "[WATCHDOG]'), 0);
 });
@@ -93,6 +94,8 @@ test('notify: README still documents product scope and Discord or Feishu deliver
   assert.match(readme, /Keep your local OpenClaw gateway recoverable on macOS/);
   assert.match(readme, /Sends Feishu and\/or Discord webhook notifications/);
   assert.match(readme, /FEISHU_WATCHDOG_WEBHOOK_URL/);
+  assert.match(readme, /WATCHDOG_DISPLAY_NAME/);
+  assert.match(readme, /bash gateway-watchdog\.sh restart gateway/);
   assert.match(readme, /gateway install failed/);
   assert.match(readme, /gateway start failed/);
   assert.match(readme, /recovery timed out/);
@@ -108,6 +111,8 @@ test('docs: repository includes a Chinese README linked from the main README', (
   assert.match(readmeZhCN, /让你的本地 OpenClaw gateway 在 macOS 上更容易恢复/);
   assert.match(readmeZhCN, /\[English README\]\(\.\/README\.md\)/);
   assert.match(readmeZhCN, /FEISHU_WATCHDOG_WEBHOOK_URL/);
+  assert.match(readmeZhCN, /bash gateway-watchdog\.sh restart gateway/);
+  assert.match(readmeZhCN, /OpenClaw Gateway Watchdog/);
 });
 
 test('notify: LaunchAgent template no longer carries empty webhook placeholders', () => {
@@ -117,6 +122,7 @@ test('notify: LaunchAgent template no longer carries empty webhook placeholders'
 
 test('launchd: plist template uses placeholders instead of user-specific absolute paths', () => {
   assert.match(plistTemplate, /__WATCHDOG_SCRIPT_PATH__/);
+  assert.match(plistTemplate, /__WATCHDOG_WORKING_DIR__/);
   assert.match(plistTemplate, /__WATCHDOG_ENV_FILE__/);
   assert.match(plistTemplate, /__WATCHDOG_LOG_FILE__/);
   assert.doesNotMatch(plistTemplate, /\/Users\/rael\/\.openclaw/);
@@ -127,7 +133,9 @@ test('launchd: install script derives repo-root watchdog paths instead of fixed 
   assert.match(installLaunchAgent, /OPENCLAW_HOME="\$\{OPENCLAW_HOME:-\$HOME\/\.openclaw\}"/);
   assert.match(installLaunchAgent, /WATCHDOG_ENV_FILE="\$\{WATCHDOG_ENV_FILE:-\$OPENCLAW_HOME\/config\/watchdog\.env\}"/);
   assert.match(installLaunchAgent, /WATCHDOG_LOG_DIR="\$\{WATCHDOG_LOG_DIR:-\$OPENCLAW_HOME\/logs\}"/);
-  assert.match(installLaunchAgent, /WATCHDOG_SCRIPT_PATH="\$REPO_ROOT\/gateway-watchdog\.sh"/);
+  assert.match(installLaunchAgent, /WATCHDOG_RUNTIME_DIR="\$\{WATCHDOG_RUNTIME_DIR:-\$OPENCLAW_HOME\/watchdog\/runtime\/current\}"/);
+  assert.match(installLaunchAgent, /WATCHDOG_SCRIPT_PATH="\$WATCHDOG_RUNTIME_DIR\/gateway-watchdog\.sh"/);
+  assert.match(installLaunchAgent, /sync_runtime_tree\(\)/);
   assert.doesNotMatch(installLaunchAgent, /WATCHDOG_ENV_FILE_DEFAULT="\/Users\/rael/);
 });
 
@@ -137,6 +145,7 @@ test('launchd: install script renders plist and invokes launchctl bootstrap flow
   const callsFile = path.join(tempHome, 'launchctl.calls');
   const expectedEnvFile = path.join(tempHome, '.openclaw', 'config', 'watchdog.env');
   const expectedLogFile = path.join(tempHome, '.openclaw', 'logs', 'gateway-watchdog.log');
+  const expectedRuntimeDir = path.join(tempHome, '.openclaw', 'watchdog', 'runtime', 'current');
   const targetFile = path.join(tempHome, 'Library', 'LaunchAgents', 'ai.openclaw.gateway-watchdog.plist');
 
   fs.writeFileSync(
@@ -165,7 +174,10 @@ exit 0
   const renderedPlist = fs.readFileSync(targetFile, 'utf8');
   assert.match(renderedPlist, new RegExp(expectedEnvFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(renderedPlist, new RegExp(expectedLogFile.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  assert.match(renderedPlist, /gateway-watchdog\.sh/);
+  assert.match(renderedPlist, new RegExp(expectedRuntimeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.equal(fs.existsSync(path.join(expectedRuntimeDir, 'gateway-watchdog.sh')), true);
+  assert.equal(fs.existsSync(path.join(expectedRuntimeDir, 'watchdog-core.sh')), true);
+  assert.equal(fs.existsSync(path.join(expectedRuntimeDir, 'notifiers', 'feishu.sh')), true);
   const calls = fs.readFileSync(callsFile, 'utf8');
   assert.match(calls, /bootout gui\/\d+\/ai\.openclaw\.gateway-watchdog/);
   assert.match(calls, /bootstrap gui\/\d+ .*ai\.openclaw\.gateway-watchdog\.plist/);

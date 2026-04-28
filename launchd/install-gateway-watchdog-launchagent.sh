@@ -11,10 +11,23 @@ OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
 WATCHDOG_ENV_FILE="${WATCHDOG_ENV_FILE:-$OPENCLAW_HOME/config/watchdog.env}"
 WATCHDOG_LOG_DIR="${WATCHDOG_LOG_DIR:-$OPENCLAW_HOME/logs}"
 WATCHDOG_LOG_FILE="$WATCHDOG_LOG_DIR/gateway-watchdog.log"
-WATCHDOG_SCRIPT_PATH="$REPO_ROOT/gateway-watchdog.sh"
+WATCHDOG_RUNTIME_DIR="${WATCHDOG_RUNTIME_DIR:-$OPENCLAW_HOME/watchdog/runtime/current}"
+WATCHDOG_SCRIPT_PATH="$WATCHDOG_RUNTIME_DIR/gateway-watchdog.sh"
+WATCHDOG_WORKING_DIR="$WATCHDOG_RUNTIME_DIR"
 
 escape_sed_replacement() {
   printf '%s' "$1" | sed 's/[&]/\\&/g'
+}
+
+sync_runtime_tree() {
+  mkdir -p "$WATCHDOG_RUNTIME_DIR" "$WATCHDOG_RUNTIME_DIR/notifiers"
+  cp "$REPO_ROOT/gateway-watchdog.sh" "$WATCHDOG_RUNTIME_DIR/gateway-watchdog.sh"
+  cp "$REPO_ROOT/watchdog-core.sh" "$WATCHDOG_RUNTIME_DIR/watchdog-core.sh"
+  cp "$REPO_ROOT/config.sh" "$WATCHDOG_RUNTIME_DIR/config.sh"
+  cp "$REPO_ROOT/state.sh" "$WATCHDOG_RUNTIME_DIR/state.sh"
+  cp "$REPO_ROOT/probe.sh" "$WATCHDOG_RUNTIME_DIR/probe.sh"
+  cp "$REPO_ROOT/notifiers/"*.sh "$WATCHDOG_RUNTIME_DIR/notifiers/"
+  chmod +x "$WATCHDOG_RUNTIME_DIR/gateway-watchdog.sh"
 }
 
 if [[ ! -f "$TEMPLATE_FILE" ]]; then
@@ -22,9 +35,11 @@ if [[ ! -f "$TEMPLATE_FILE" ]]; then
   exit 1
 fi
 
-mkdir -p "$TARGET_DIR" "$WATCHDOG_LOG_DIR"
+mkdir -p "$TARGET_DIR" "$WATCHDOG_LOG_DIR" "$(dirname "$WATCHDOG_ENV_FILE")"
+sync_runtime_tree
 sed \
   -e "s|__WATCHDOG_SCRIPT_PATH__|$(escape_sed_replacement "$WATCHDOG_SCRIPT_PATH")|g" \
+  -e "s|__WATCHDOG_WORKING_DIR__|$(escape_sed_replacement "$WATCHDOG_WORKING_DIR")|g" \
   -e "s|__WATCHDOG_ENV_FILE__|$(escape_sed_replacement "$WATCHDOG_ENV_FILE")|g" \
   -e "s|__WATCHDOG_LOG_FILE__|$(escape_sed_replacement "$WATCHDOG_LOG_FILE")|g" \
   "$TEMPLATE_FILE" > "$TARGET_FILE"
@@ -37,3 +52,4 @@ echo "Installed: $TARGET_FILE"
 echo "Service: $SERVICE_LABEL"
 echo "WATCHDOG_ENV_FILE: $WATCHDOG_ENV_FILE"
 echo "WATCHDOG_LOG_FILE: $WATCHDOG_LOG_FILE"
+echo "WATCHDOG_RUNTIME_DIR: $WATCHDOG_RUNTIME_DIR"

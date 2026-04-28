@@ -125,7 +125,8 @@ test('config precedence: defaults apply when neither env source sets a key', () 
         "COOLDOWN_SEC=$COOLDOWN_SEC" \
         "POST_RESTART_RETRIES=$POST_RESTART_RETRIES" \
         "POST_RESTART_SLEEP_SEC=$POST_RESTART_SLEEP_SEC" \
-        "NOTIFIER=$NOTIFIER"
+        "NOTIFIER=$NOTIFIER" \
+        "WATCHDOG_DISPLAY_NAME=$WATCHDOG_DISPLAY_NAME"
     `,
     {
       env: {
@@ -140,6 +141,7 @@ test('config precedence: defaults apply when neither env source sets a key', () 
   assert.match(output, /POST_RESTART_RETRIES=3/);
   assert.match(output, /POST_RESTART_SLEEP_SEC=5/);
   assert.match(output, /NOTIFIER=composite/);
+  assert.match(output, /WATCHDOG_DISPLAY_NAME=OpenClaw Gateway Watchdog/);
 });
 
 test('public paths: OPENCLAW_HOME drives env file lookup and derived state/log paths', () => {
@@ -294,6 +296,98 @@ test('probe: returns fail on non-zero openclaw exit', () => {
   `);
 
   assert.equal(output.trim(), 'fail');
+});
+
+test('notify format: automatic restart message identifies OpenClaw service, source, reason, and action', () => {
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_DISPLAY_NAME="OpenClaw Gateway Watchdog"
+    POST_RESTART_RETRIES=6
+    format_notification restart_triggered 3 gateway_status_unhealthy restart_gateway
+  `);
+
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启已触发/);
+  assert.match(output, /来源: passive watchdog/);
+  assert.match(output, /故障环节: OpenClaw Gateway \/ 健康状态/);
+  assert.match(output, /原因: gateway_status_unhealthy - openclaw gateway status --json 未满足健康合同/);
+  assert.match(output, /动作: 重启 OpenClaw gateway/);
+  assert.match(output, /连续失败: 3/);
+  assert.match(output, /raw: event=restart_triggered .* failures=3 reason=gateway_status_unhealthy action=restart_gateway/);
+});
+
+test('manual restart: restart gateway triggers OpenClaw restart and user-facing notifications', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-manual-restart-'));
+  const notificationsFile = path.join(tempDir, 'notifications.log');
+  const callsFile = path.join(tempDir, 'calls.log');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${path.join(tempDir, 'state.json')}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    WATCHDOG_DISPLAY_NAME="OpenClaw Gateway Watchdog"
+    POST_RESTART_RETRIES=2
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { printf '%s %s %s %s\\n' "$1" "$2" "$3" "\${4:-}" >> "$LOG_FILE"; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { printf '%s\\n' "$1" >> "${notificationsFile}"; }
+    init_runtime_paths() {
+      mkdir -p "$WATCHDOG_RUNTIME_TMP_DIR"
+      RESTART_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/restart.out"
+      NOTIFY_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/notify.out"
+    }
+    run_openclaw() {
+      printf '%s %s\\n' "$1" "$2" >> "${callsFile}"
+      case "$1 $2" in
+        "gateway restart")
+          printf 'restarted\\n'
+          return 0
+          ;;
+      esac
+      return 99
+    }
+    watchdog_main restart gateway
+    cat "$LOG_FILE"
+    printf '\\n--- notifications ---\\n'
+    cat "${notificationsFile}"
+  `);
+
+  assert.match(fs.readFileSync(callsFile, 'utf8'), /gateway restart/);
+  assert.match(output, /manual_restart_triggered target=gateway action=restart_gateway/);
+  assert.match(output, /manual_restart_succeeded target=gateway action=restart_gateway/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 手动重启已触发/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 手动重启成功/);
+  assert.match(output, /来源: local CLI/);
+  assert.match(output, /动作: 重启 OpenClaw gateway/);
+});
+
+test('manual restart: invalid target returns usage without taking the lock', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-manual-invalid-'));
+  const lockDir = path.join(tempDir, 'gateway.lock');
+  const result = spawnSync(
+    '/bin/bash',
+    [
+      '-lc',
+      `
+        source "${corePath}"
+        WATCHDOG_LOCK_DIR="${lockDir}"
+        watchdog_main restart cloudflared
+      `,
+    ],
+    { encoding: 'utf8' },
+  );
+
+  assert.equal(result.status, 64);
+  assert.match(result.stderr, /Usage: .*restart gateway/);
+  assert.equal(fs.existsSync(lockDir), false);
 });
 
 test('retries: POST_RESTART_RETRIES drives the main recovery loop count before any neutral grace probe', () => {
@@ -499,8 +593,68 @@ test('notify: watchdog_main reports install failure explicitly in restart_failed
     cat "${notificationsFile}"
   `);
 
-  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
-  assert.match(output, /\[WATCHDOG\] Restart failed: gateway install failed/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启已触发/);
+  assert.match(output, /reason=gateway_status_unhealthy action=restart_gateway/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启失败/);
+  assert.match(output, /gateway_install_failed - gateway install failed/);
+});
+
+test('notify: watchdog_main preserves probe reason when openclaw status command fails', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-notify-status-fail-'));
+  const notificationsFile = path.join(tempDir, 'notifications.log');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${path.join(tempDir, 'state.json')}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    FAIL_THRESHOLD=1
+    COOLDOWN_SEC=300
+    POST_RESTART_RETRIES=1
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { :; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { printf '%s\\n' "$1" >> "${notificationsFile}"; }
+    init_runtime_paths() {
+      mkdir -p "$WATCHDOG_RUNTIME_TMP_DIR"
+      RESTART_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/restart.out"
+      NOTIFY_OUTPUT_FILE="$WATCHDOG_RUNTIME_TMP_DIR/notify.out"
+    }
+    ensure_state() { :; }
+    read_state_field() {
+      case "$1" in
+        ".consecutive_failures"|".cooldown_until_epoch") printf '0\\n' ;;
+        *) printf '\\n' ;;
+      esac
+    }
+    write_state() { cat >/dev/null; }
+    run_openclaw() {
+      case "$1 $2" in
+        "gateway status")
+          printf 'gateway status failed\\n' >&2
+          return 2
+          ;;
+        "gateway restart")
+          printf 'restarted\\n'
+          return 0
+          ;;
+      esac
+      return 99
+    }
+    watchdog_main
+    cat "${notificationsFile}"
+  `);
+
+  assert.match(output, /故障环节: OpenClaw CLI \/ gateway status/);
+  assert.match(output, /reason=openclaw_status_failed action=restart_gateway/);
 });
 
 test('notify: watchdog_main reports start failure explicitly in restart_failed notification', () => {
@@ -562,8 +716,10 @@ test('notify: watchdog_main reports start failure explicitly in restart_failed n
     cat "${notificationsFile}"
   `);
 
-  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
-  assert.match(output, /\[WATCHDOG\] Restart failed: gateway start failed/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启已触发/);
+  assert.match(output, /reason=gateway_status_unhealthy action=restart_gateway/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启失败/);
+  assert.match(output, /gateway_start_failed - gateway start failed/);
 });
 
 test('notify: watchdog_main reports recovery timeout explicitly after a clean restart rc', () => {
@@ -624,8 +780,10 @@ test('notify: watchdog_main reports recovery timeout explicitly after a clean re
     cat "${notificationsFile}"
   `);
 
-  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
-  assert.match(output, /\[WATCHDOG\] Restart failed: recovery timed out/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启已触发/);
+  assert.match(output, /reason=gateway_status_unhealthy action=restart_gateway/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启失败/);
+  assert.match(output, /recovery_timeout - 重启命令返回后健康检查仍未恢复/);
 });
 
 test('notify: watchdog_main reports restart succeeded when final recovery grace catches a late ok after neutral probes', () => {
@@ -694,8 +852,9 @@ test('notify: watchdog_main reports restart succeeded when final recovery grace 
   `);
 
   assert.match(output, /probe_calls=4/);
-  assert.match(output, /\[WATCHDOG\] Gateway unhealthy, restarting/);
-  assert.match(output, /\[WATCHDOG\] Restart succeeded/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启已触发/);
+  assert.match(output, /reason=gateway_status_unhealthy action=restart_gateway/);
+  assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启已恢复/);
   assert.doesNotMatch(output, /recovery timed out/);
 });
 
