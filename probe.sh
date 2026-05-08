@@ -23,10 +23,16 @@ probe_gateway() {
     return 0
   fi
 
+  # Primary: health object present and healthy
   if jq -e '.service.loaded == true and .service.runtime.status == "running" and .rpc.ok == true and .health.healthy == true' >/dev/null 2>&1 <<<"$out"; then
     log INFO probe_ok "rc=0"
     probe_emit ok ok
-  elif jq -e '.service.loaded == true and (.service.runtime.status == "active" or .service.runtime.status == "running") and .rpc.ok != true and .health.healthy == true' >/dev/null 2>&1 <<<"$out"; then
+  # Fallback: health absent/null — trust service+rpc as health signal (openclaw >=2026.5 removed health field)
+  elif jq -e '.service.loaded == true and .service.runtime.status == "running" and .rpc.ok == true and (.health == null or .health == {})' >/dev/null 2>&1 <<<"$out"; then
+    log INFO probe_ok "rc=0 reason=health_fallback_service_rpc"
+    probe_emit ok ok
+  # Neutral: loaded but rpc not ready, health may indicate ok
+  elif jq -e '.service.loaded == true and (.service.runtime.status == "active" or .service.runtime.status == "running") and .rpc.ok != true' >/dev/null 2>&1 <<<"$out"; then
     log INFO probe_neutral "reason=loaded_but_not_ready"
     probe_emit neutral loaded_but_not_ready
   else

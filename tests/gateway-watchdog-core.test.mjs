@@ -251,6 +251,46 @@ test('probe: returns ok for healthy json contract', () => {
   assert.equal(output.trim(), 'ok');
 });
 
+test('probe: returns ok via health_fallback when health is null', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-probe-health-null-'));
+  const jsonPath = path.join(tempDir, 'gateway-status.json');
+  const healthyStatus = structuredClone(sampleGatewayStatus);
+
+  healthyStatus.rpc.ok = true;
+  healthyStatus.health = null;
+  fs.writeFileSync(jsonPath, `${JSON.stringify(healthyStatus)}\n`);
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    OPENCLAW_BIN_RESOLVED="/bin/echo"
+    run_openclaw() { cat "${jsonPath}"; }
+    printf '%s\\n' "$(probe_gateway)"
+  `);
+
+  assert.equal(output.trim(), 'ok');
+});
+
+test('probe: returns ok via health_fallback when health is empty object', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-probe-health-empty-'));
+  const jsonPath = path.join(tempDir, 'gateway-status.json');
+  const healthyStatus = structuredClone(sampleGatewayStatus);
+
+  healthyStatus.rpc.ok = true;
+  healthyStatus.health = {};
+  fs.writeFileSync(jsonPath, `${JSON.stringify(healthyStatus)}\n`);
+
+  const output = runBash(`
+    source "${corePath}"
+    log() { :; }
+    OPENCLAW_BIN_RESOLVED="/bin/echo"
+    run_openclaw() { cat "${jsonPath}"; }
+    printf '%s\\n' "$(probe_gateway)"
+  `);
+
+  assert.equal(output.trim(), 'ok');
+});
+
 test('probe: returns neutral for loaded running gateway that is not rpc-ready', () => {
   const output = runBash(`
     source "${corePath}"
