@@ -55,11 +55,12 @@ tail -n 20 "${WATCHDOG_LOG_DIR:-$HOME/.openclaw/logs}/gateway-watchdog.log"
 - `NOTIFIER`：`discord`、`feishu` 或 `composite`。
 - `FAIL_THRESHOLD`、`MAX_RESTART_FAILURES`、`COOLDOWN_SEC`、`POST_RESTART_RETRIES`、`POST_RESTART_SLEEP_SEC`。
 - `OPENCLAW_BIN`、`NODE_BIN`、`WATCHDOG_ENABLED`。
-- `DISCORD_WATCHDOG_WEBHOOK_URL`、`FEISHU_WATCHDOG_WEBHOOK_URL`。
+- `DISCORD_WATCHDOG_WEBHOOK_URL`。
+- `FEISHU_BOT_APP_ID`、`FEISHU_BOT_APP_SECRET`、`FEISHU_BOT_CHAT_ID`。
 
 路径覆盖项包括 `OPENCLAW_HOME`、`WATCHDOG_STATE_DIR`、`WATCHDOG_LOG_DIR`、`WATCHDOG_ENV_FILE` 和 `WATCHDOG_DISABLE_FILE`。
 
-Webhook URL 属于 secret，应放在私有 env 文件中。env 文件通过 allowlist 的 `key=value` 解析器读取，不会被当作 shell 脚本 source。
+飞书 bot 凭据属于 secret，应放在私有 env 文件中。env 文件通过 allowlist 的 `key=value` 解析器读取，不会被当作 shell 脚本 source。
 
 ## 告警
 

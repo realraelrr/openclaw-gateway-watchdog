@@ -2,7 +2,7 @@
 
 Keep your local OpenClaw gateway recoverable on macOS.
 
-OpenClaw Gateway Watchdog is a small `launchd` watchdog for one thing: checking `openclaw gateway status --json`, recovering the OpenClaw gateway when that health contract fails, and sending clear Feishu or Discord alerts. Sends Feishu and/or Discord webhook notifications when restart recovery starts, succeeds, or fails.
+OpenClaw Gateway Watchdog is a small `launchd` watchdog for one thing: checking `openclaw gateway status --json`, recovering the OpenClaw gateway when that health contract fails, and sending clear Feishu or Discord alerts. Sends Feishu bot and/or Discord webhook notifications when restart recovery starts, succeeds, or fails.
 
 [中文文档](./README.zh-CN.md)
 
@@ -55,11 +55,12 @@ Common options:
 - `NOTIFIER`: `discord`, `feishu`, or `composite`.
 - `FAIL_THRESHOLD`, `MAX_RESTART_FAILURES`, `COOLDOWN_SEC`, `POST_RESTART_RETRIES`, `POST_RESTART_SLEEP_SEC`.
 - `OPENCLAW_BIN`, `NODE_BIN`, `WATCHDOG_ENABLED`.
-- `DISCORD_WATCHDOG_WEBHOOK_URL`, `FEISHU_WATCHDOG_WEBHOOK_URL`.
+- `DISCORD_WATCHDOG_WEBHOOK_URL`.
+- `FEISHU_BOT_APP_ID`, `FEISHU_BOT_APP_SECRET`, `FEISHU_BOT_CHAT_ID`.
 
 Path options include `OPENCLAW_HOME`, `WATCHDOG_STATE_DIR`, `WATCHDOG_LOG_DIR`, `WATCHDOG_ENV_FILE`, and `WATCHDOG_DISABLE_FILE`.
 
-Webhook URLs are secrets and should live in the private env file. The env file is parsed through an allowlisted `key=value` reader; it is not sourced as shell code.
+Feishu bot credentials are secrets and should live in the private env file. The env file is parsed through an allowlisted `key=value` reader; it is not sourced as shell code.
 
 ## Alerts
 

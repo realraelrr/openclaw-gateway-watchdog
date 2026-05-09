@@ -53,7 +53,8 @@ test('discord: module defines notify_send with Discord payload and tightened tim
 
 test('feishu: module defines notify_send with Feishu payload and tightened timeout', () => {
   assert.match(feishu, /notify_send\(\) \{/);
-  assert.match(feishu, /\{msg_type:"text",content:\{text:\$text\}\}/);
+  assert.match(feishu, /tenant_access_token\/internal/);
+  assert.match(feishu, /im\/v1\/messages\?receive_id_type=\$\{FEISHU_BOT_RECEIVE_ID_TYPE:-chat_id\}/);
   assert.match(feishu, /--connect-timeout 2 --max-time 4/);
 });
 
@@ -63,8 +64,10 @@ test('notify: provider modules keep provider-qualified temp files and provider l
   assert.match(discord, /log ERROR notify_failed "provider=\$provider reason=transport/);
   assert.match(discord, /log ERROR notify_failed "provider=\$provider reason=http_status/);
   assert.match(discord, /log INFO notify_ok "provider=\$provider status=\$http_code"/);
-  assert.match(feishu, /log ERROR notify_failed "provider=\$provider reason=transport/);
-  assert.match(feishu, /log INFO notify_ok "provider=\$provider status=\$http_code"/);
+  assert.match(feishu, /token_body_file="\$\{NOTIFY_OUTPUT_FILE\}\.\$\{provider\}\.token\.body"/);
+  assert.match(feishu, /notify_body_file="\$\{NOTIFY_OUTPUT_FILE\}\.\$\{provider\}\.body"/);
+  assert.match(feishu, /log ERROR notify_failed "provider=\$provider mode=bot step=message reason=transport/);
+  assert.match(feishu, /log INFO notify_ok "provider=\$provider mode=bot status=\$http_code"/);
 });
 
 test('composite: module sources both providers and aggregates success across them', () => {
@@ -92,8 +95,8 @@ test('notify: core keeps no-op notifier defaults for fail-open startup', () => {
 
 test('notify: README still documents product scope and Discord or Feishu delivery', () => {
   assert.match(readme, /Keep your local OpenClaw gateway recoverable on macOS/);
-  assert.match(readme, /Sends Feishu and\/or Discord webhook notifications/);
-  assert.match(readme, /FEISHU_WATCHDOG_WEBHOOK_URL/);
+  assert.match(readme, /Sends Feishu bot and\/or Discord webhook notifications/);
+  assert.match(readme, /FEISHU_BOT_CHAT_ID/);
   assert.match(readme, /WATCHDOG_DISPLAY_NAME/);
   assert.match(readme, /bash gateway-watchdog\.sh restart gateway/);
   assert.match(readme, /gateway install failed/);
@@ -101,8 +104,8 @@ test('notify: README still documents product scope and Discord or Feishu deliver
   assert.match(readme, /recovery timed out/);
 });
 
-test('notify: README treats the private env file as the supported webhook secret source', () => {
-  assert.match(readme, /Webhook URLs are secrets and should live in the private env file/);
+test('notify: README treats the private env file as the supported secret source', () => {
+  assert.match(readme, /Feishu bot credentials are secrets and should live in the private env file/);
   assert.doesNotMatch(readme, /LaunchAgent environment variables/);
 });
 
@@ -110,14 +113,13 @@ test('docs: repository includes a Chinese README linked from the main README', (
   assert.match(readme, /\[中文文档\]\(\.\/README\.zh-CN\.md\)/);
   assert.match(readmeZhCN, /让你的本地 OpenClaw gateway 在 macOS 上更容易恢复/);
   assert.match(readmeZhCN, /\[English README\]\(\.\/README\.md\)/);
-  assert.match(readmeZhCN, /FEISHU_WATCHDOG_WEBHOOK_URL/);
+  assert.match(readmeZhCN, /FEISHU_BOT_CHAT_ID/);
   assert.match(readmeZhCN, /bash gateway-watchdog\.sh restart gateway/);
   assert.match(readmeZhCN, /OpenClaw Gateway Watchdog/);
 });
 
 test('notify: LaunchAgent template no longer carries empty webhook placeholders', () => {
   assert.doesNotMatch(plistTemplate, /DISCORD_WATCHDOG_WEBHOOK_URL/);
-  assert.doesNotMatch(plistTemplate, /FEISHU_WATCHDOG_WEBHOOK_URL/);
 });
 
 test('launchd: plist template uses placeholders instead of user-specific absolute paths', () => {
@@ -237,26 +239,53 @@ printf '204'
   assert.equal(fs.existsSync(`${notifyBase}.discord.body`), true);
 });
 
-test('notify: feishu notifier records http-status failures against mocked webhook transport', () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-feishu-notify-'));
-  const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-feishu-bin-'));
+test('notify: feishu notifier sends text through bot API with tenant token', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-feishu-bot-notify-'));
+  const fakeBinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-feishu-bot-bin-'));
   const notifyBase = path.join(tempDir, 'notify');
   const logFile = path.join(tempDir, 'watchdog.log');
+  const requestLog = path.join(tempDir, 'requests.log');
 
   fs.writeFileSync(
     path.join(fakeBinDir, 'curl'),
     `#!/usr/bin/env bash
 out_file=""
+data=""
+auth=""
 while (($#)); do
   if [[ "$1" == "-o" ]]; then
     out_file="$2"
     shift 2
     continue
   fi
+  if [[ "$1" == "-d" ]]; then
+    data="$2"
+    shift 2
+    continue
+  fi
+  if [[ "$1" == "-H" && "$2" == Authorization:* ]]; then
+    auth="$2"
+    shift 2
+    continue
+  fi
+  url="$1"
   shift
 done
-printf 'upstream failed\\n' > "$out_file"
-printf '500'
+printf 'url=%s auth=%s data=%s\\n' "$url" "$auth" "$data" >> "${requestLog}"
+case "$url" in
+  */auth/v3/tenant_access_token/internal)
+    printf '{"code":0,"tenant_access_token":"tenant-token"}\\n' > "$out_file"
+    printf '200'
+    ;;
+  */im/v1/messages?receive_id_type=chat_id)
+    printf '{"code":0,"data":{"message_id":"om_test"}}\\n' > "$out_file"
+    printf '200'
+    ;;
+  *)
+    printf '{"code":999,"msg":"unexpected url"}\\n' > "$out_file"
+    printf '404'
+    ;;
+esac
 `,
     { mode: 0o755 },
   );
@@ -266,7 +295,9 @@ printf '500'
       source "${path.join(repoRoot, 'notifiers', 'feishu.sh')}"
       LOG_FILE="${logFile}"
       NOTIFY_OUTPUT_FILE="${notifyBase}"
-      FEISHU_WEBHOOK_URL="https://example.invalid/feishu"
+      FEISHU_BOT_APP_ID="cli_test"
+      FEISHU_BOT_APP_SECRET="secret_test"
+      FEISHU_BOT_CHAT_ID="oc_ops"
       log() { printf '%s %s %s %s\\n' "$1" "$2" "$3" "$4" >> "$LOG_FILE"; }
       if notify_send "hello feishu"; then
         printf 'status=0\\n'
@@ -282,7 +313,12 @@ printf '500'
   );
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /status=1/);
+  assert.match(result.stdout, /status=0/);
   const log = fs.readFileSync(logFile, 'utf8');
-  assert.match(log, /ERROR notify_failed provider=feishu reason=http_status status=500 summary=upstream_failed/);
+  assert.match(log, /INFO notify_ok provider=feishu mode=bot status=200/);
+  const requests = fs.readFileSync(requestLog, 'utf8');
+  assert.match(requests, /auth\/v3\/tenant_access_token\/internal/);
+  assert.match(requests, /im\/v1\/messages\?receive_id_type=chat_id auth=Authorization: Bearer tenant-token/);
+  assert.match(requests, /"receive_id":"oc_ops"/);
+  assert.match(requests, /"content":"\{\\"text\\":\\"hello feishu\\"\}"/);
 });

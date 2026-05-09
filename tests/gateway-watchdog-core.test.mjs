@@ -378,7 +378,7 @@ test('manual restart: restart gateway triggers OpenClaw restart and user-facing 
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { printf '%s %s %s %s\\n' "$1" "$2" "$3" "\${4:-}" >> "$LOG_FILE"; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -594,7 +594,7 @@ test('notify: watchdog_main reports install failure explicitly in restart_failed
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { :; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -662,7 +662,7 @@ test('notify: watchdog_main preserves probe reason when openclaw status command 
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { :; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -720,7 +720,7 @@ test('notify: watchdog_main reports start failure explicitly in restart_failed n
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { :; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -785,7 +785,7 @@ test('notify: watchdog_main reports recovery timeout explicitly after a clean re
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { :; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -851,7 +851,7 @@ test('watchdog_main: stops automatic restart after max restart failures', () => 
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { :; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -904,7 +904,7 @@ test('notify: watchdog_main reports restart succeeded when final recovery grace 
     POST_RESTART_SLEEP_SEC=0
     WATCHDOG_ENABLED=1
     log() { :; }
-    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
     load_notifier() { :; }
     notifier_init() { :; }
     notifier_cleanup() { :; }
@@ -1050,7 +1050,7 @@ test('cleanup: watchdog_main releases lock when state write fails after lock acq
         POST_RESTART_SLEEP_SEC=0
         WATCHDOG_ENABLED=1
         log() { :; }
-        load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+        load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; }
         load_notifier() { :; }
         notifier_init() { :; }
         notifier_cleanup() { :; }
