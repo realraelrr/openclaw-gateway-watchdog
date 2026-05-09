@@ -4,8 +4,8 @@ WATCHDOG_LOCK_STALE_SEC="${WATCHDOG_LOCK_STALE_SEC:-120}"
 
 init_state() {
   mkdir -p "$(dirname "$STATE_FILE")"
-  cat > "$STATE_FILE" <<'JSON'
-{"consecutive_failures":0,"last_ok_at":"","last_failure_at":"","last_restart_at":"","cooldown_until_epoch":0}
+cat > "$STATE_FILE" <<'JSON'
+{"consecutive_failures":0,"restart_failures":0,"last_ok_at":"","last_failure_at":"","last_restart_at":"","cooldown_until_epoch":0}
 JSON
 }
 

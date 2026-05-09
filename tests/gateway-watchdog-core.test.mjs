@@ -71,6 +71,7 @@ test('config precedence: process env overrides WATCHDOG_ENV_FILE and defaults', 
     envFile,
     [
       'FAIL_THRESHOLD=9',
+      'MAX_RESTART_FAILURES=8',
       'COOLDOWN_SEC=111',
       'POST_RESTART_RETRIES=7',
       'POST_RESTART_SLEEP_SEC=8',
@@ -86,6 +87,7 @@ test('config precedence: process env overrides WATCHDOG_ENV_FILE and defaults', 
       load_watchdog_config
       printf '%s\\n' \
         "FAIL_THRESHOLD=$FAIL_THRESHOLD" \
+        "MAX_RESTART_FAILURES=$MAX_RESTART_FAILURES" \
         "COOLDOWN_SEC=$COOLDOWN_SEC" \
         "POST_RESTART_RETRIES=$POST_RESTART_RETRIES" \
         "POST_RESTART_SLEEP_SEC=$POST_RESTART_SLEEP_SEC" \
@@ -97,12 +99,14 @@ test('config precedence: process env overrides WATCHDOG_ENV_FILE and defaults', 
         HOME: tempDir,
         WATCHDOG_ENV_FILE: envFile,
         FAIL_THRESHOLD: '5',
+        MAX_RESTART_FAILURES: '7',
         NOTIFIER: 'feishu',
       },
     },
   );
 
   assert.match(output, /FAIL_THRESHOLD=5/);
+  assert.match(output, /MAX_RESTART_FAILURES=7/);
   assert.match(output, /COOLDOWN_SEC=111/);
   assert.match(output, /POST_RESTART_RETRIES=7/);
   assert.match(output, /POST_RESTART_SLEEP_SEC=8/);
@@ -122,6 +126,7 @@ test('config precedence: defaults apply when neither env source sets a key', () 
       load_watchdog_config
       printf '%s\\n' \
         "FAIL_THRESHOLD=$FAIL_THRESHOLD" \
+        "MAX_RESTART_FAILURES=$MAX_RESTART_FAILURES" \
         "COOLDOWN_SEC=$COOLDOWN_SEC" \
         "POST_RESTART_RETRIES=$POST_RESTART_RETRIES" \
         "POST_RESTART_SLEEP_SEC=$POST_RESTART_SLEEP_SEC" \
@@ -137,6 +142,7 @@ test('config precedence: defaults apply when neither env source sets a key', () 
   );
 
   assert.match(output, /FAIL_THRESHOLD=3/);
+  assert.match(output, /MAX_RESTART_FAILURES=10/);
   assert.match(output, /COOLDOWN_SEC=300/);
   assert.match(output, /POST_RESTART_RETRIES=3/);
   assert.match(output, /POST_RESTART_SLEEP_SEC=5/);
@@ -824,6 +830,60 @@ test('notify: watchdog_main reports recovery timeout explicitly after a clean re
   assert.match(output, /reason=gateway_status_unhealthy action=restart_gateway/);
   assert.match(output, /\[OpenClaw Gateway Watchdog\] 自动重启失败/);
   assert.match(output, /recovery_timeout - 重启命令返回后健康检查仍未恢复/);
+});
+
+test('watchdog_main: stops automatic restart after max restart failures', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'watchdog-restart-limit-'));
+  const stateFile = path.join(tempDir, 'state.json');
+  const restartCallsFile = path.join(tempDir, 'restart-calls.log');
+
+  const output = runBash(`
+    source "${corePath}"
+    WATCHDOG_LOCK_DIR="${path.join(tempDir, 'gateway.lock')}"
+    WATCHDOG_RUNTIME_TMP_DIR="${path.join(tempDir, 'tmp')}"
+    LOG_FILE="${path.join(tempDir, 'watchdog.log')}"
+    STATE_FILE="${stateFile}"
+    WATCHDOG_DISABLE_FILE="${path.join(tempDir, 'disabled')}"
+    FAIL_THRESHOLD=1
+    MAX_RESTART_FAILURES=2
+    COOLDOWN_SEC=0
+    POST_RESTART_RETRIES=1
+    POST_RESTART_SLEEP_SEC=0
+    WATCHDOG_ENABLED=1
+    log() { :; }
+    load_watchdog_config() { :; DISCORD_WEBHOOK_URL=""; FEISHU_WEBHOOK_URL=""; }
+    load_notifier() { :; }
+    notifier_init() { :; }
+    notifier_cleanup() { :; }
+    resolve_openclaw_bin() { OPENCLAW_BIN_RESOLVED="/bin/echo"; }
+    resolve_node_bin() { NODE_BIN_RESOLVED=""; }
+    notify_send() { :; }
+    probe_gateway() {
+      PROBE_STATUS="fail"
+      PROBE_REASON="gateway_status_unhealthy"
+      printf 'fail\\n'
+    }
+    restart_gateway() {
+      printf 'restart\\n' >> "${restartCallsFile}"
+      printf 'restarted\\n' > "$RESTART_OUTPUT_FILE"
+      return 0
+    }
+    init_state
+    cat <<JSON | write_state
+{"consecutive_failures":1,"restart_failures":1,"last_ok_at":"2026-05-09T00:00:00Z","last_failure_at":"","last_restart_at":"","cooldown_until_epoch":0}
+JSON
+    watchdog_main
+    watchdog_main
+    printf 'restarts=%s\\n' "$(wc -l < "${restartCallsFile}")"
+    cat "${stateFile}"
+  `);
+
+  const lines = output.trim().split('\n');
+  const restartLine = lines.at(-2);
+  const state = JSON.parse(lines.at(-1));
+
+  assert.match(restartLine, /restarts=\s*1$/);
+  assert.equal(state.restart_failures, 2);
 });
 
 test('notify: watchdog_main reports restart succeeded when final recovery grace catches a late ok after neutral probes', () => {

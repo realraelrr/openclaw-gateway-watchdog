@@ -388,6 +388,7 @@ watchdog_manual_restart() {
 watchdog_main() {
   local now_iso now_epoch probe incident_reason
   local consecutive_failures cooldown_until_epoch last_ok_at last_failure_at last_restart_at
+  local restart_failures
   local restart_rc restart_summary recovered
   local restarted=0
 
@@ -419,6 +420,8 @@ watchdog_main() {
   fi
 
   consecutive_failures="$(read_state_field '.consecutive_failures')"
+  restart_failures="$(read_state_field '.restart_failures')"
+  [[ "$restart_failures" =~ ^-?[0-9]+$ ]] || restart_failures=0
   cooldown_until_epoch="$(read_state_field '.cooldown_until_epoch')"
   last_ok_at="$(read_state_field '.last_ok_at')"
   last_failure_at="$(read_state_field '.last_failure_at')"
@@ -428,7 +431,7 @@ watchdog_main() {
     log WARN watchdog_disabled "enabled=$WATCHDOG_ENABLED sentinel=$([[ -f "$WATCHDOG_DISABLE_FILE" ]] && echo 1 || echo 0)"
     consecutive_failures=0
     write_state <<JSON
-{"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
+{"consecutive_failures":$consecutive_failures,"restart_failures":$restart_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
     watchdog_finalize
     return 0
@@ -438,10 +441,11 @@ JSON
   probe="$RUN_PROBE_RESULT"
   if [[ "$probe" == "ok" ]]; then
     consecutive_failures=0
+    restart_failures=0
     last_ok_at="$now_iso"
     log INFO state_update "consecutive_failures=0"
     write_state <<JSON
-{"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
+{"consecutive_failures":$consecutive_failures,"restart_failures":$restart_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
     watchdog_finalize
     return 0
@@ -461,13 +465,22 @@ JSON
   if (( now_epoch < cooldown_until_epoch )); then
     log WARN cooldown_skip "until=$cooldown_until_epoch failures=$consecutive_failures"
     write_state <<JSON
-{"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
+{"consecutive_failures":$consecutive_failures,"restart_failures":$restart_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
     watchdog_finalize
     return 0
   fi
 
   if (( consecutive_failures >= FAIL_THRESHOLD )); then
+    if (( ${MAX_RESTART_FAILURES:-10} > 0 && restart_failures >= ${MAX_RESTART_FAILURES:-10} )); then
+      log ERROR restart_limit_reached "restart_failures=$restart_failures max_restart_failures=${MAX_RESTART_FAILURES:-10} reason=${PROBE_REASON:-gateway_status_unhealthy}"
+      write_state <<JSON
+{"consecutive_failures":$consecutive_failures,"restart_failures":$restart_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
+JSON
+      watchdog_finalize
+      return 0
+    fi
+
     restarted=1
     incident_reason="${PROBE_REASON:-gateway_status_unhealthy}"
     log ERROR restart_triggered "failures=$consecutive_failures"
@@ -491,10 +504,12 @@ JSON
     cooldown_until_epoch=$((now_epoch + COOLDOWN_SEC))
     if (( recovered == 1 )); then
       consecutive_failures=0
+      restart_failures=0
       last_ok_at="$(date -u +%FT%TZ)"
       log INFO restart_succeeded "restart_rc=$restart_rc summary=${restart_summary:-none} cooldown_until=$cooldown_until_epoch"
       notify_send "$(format_notification restart_succeeded 0 "$incident_reason" restart_gateway)" || true
     else
+      restart_failures=$((restart_failures + 1))
       if (( restart_rc == 0 )); then
         RESTART_FAILURE_REASON="recovery_timeout"
       fi
@@ -508,7 +523,7 @@ JSON
   fi
 
   write_state <<JSON
-{"consecutive_failures":$consecutive_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
+{"consecutive_failures":$consecutive_failures,"restart_failures":$restart_failures,"last_ok_at":"$last_ok_at","last_failure_at":"$last_failure_at","last_restart_at":"$last_restart_at","cooldown_until_epoch":$cooldown_until_epoch}
 JSON
   watchdog_finalize
 }
